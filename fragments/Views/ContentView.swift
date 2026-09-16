@@ -32,6 +32,8 @@ struct ContentView: View {
     @State private var selectedFragment: Fragment? = nil
     @State private var quickCaptureInitialType: FragmentType = .photo
     @State private var pendingQuickCaptureType: FragmentType = .photo
+    @State private var activeMomentInitialCaptureType: FragmentType? = nil
+    @State private var activeMomentAutoOpenEnd: Bool = false
 
     private var currentTab: AppTab {
         selectedTab == .capture ? activeTab : selectedTab
@@ -156,11 +158,17 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showActiveMomentView) {
             ActiveMomentView(
                 momentManager: momentManager,
+                initialCaptureType: activeMomentInitialCaptureType,
+                autoOpenEnd: activeMomentAutoOpenEnd,
                 onDismiss: {
                     showActiveMomentView = false
+                    activeMomentInitialCaptureType = nil
+                    activeMomentAutoOpenEnd = false
                 },
                 onSaveComplete: {
                     showActiveMomentView = false
+                    activeMomentInitialCaptureType = nil
+                    activeMomentAutoOpenEnd = false
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                         selectedTab = .logs
                         activeTab = .logs
@@ -267,6 +275,51 @@ struct ContentView: View {
         }
         .onAppear {
             momentManager.setModelContext(modelContext)
+        }
+        .onOpenURL { url in
+            handleDeepLink(url)
+        }
+    }
+
+    private func handleDeepLink(_ url: URL) {
+        guard url.scheme == "fragments" else { return }
+
+        // Close any standalone detail views or menus that might block presentation
+        selectedFragment = nil
+        isCaptureMenuOpen = false
+
+        if url.host == "end" {
+            // Dismiss any existing active moment cover first so we can cleanly open end sheet
+            showActiveMomentView = false
+            activeMomentInitialCaptureType = nil
+            activeMomentAutoOpenEnd = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showActiveMomentView = true
+            }
+        } else if url.host == "capture" {
+            let modeParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "mode" })?
+                .value ?? "photo"
+
+            let targetType: FragmentType
+            switch modeParam {
+            case "video": targetType = .video
+            case "note":  targetType = .note
+            case "audio", "memo": targetType = .audio
+            default:      targetType = .photo
+            }
+
+            showActiveMomentView = false
+            activeMomentAutoOpenEnd = false
+            activeMomentInitialCaptureType = targetType
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showActiveMomentView = true
+            }
+        } else if url.host == "moment" {
+            activeMomentInitialCaptureType = nil
+            activeMomentAutoOpenEnd = false
+            showActiveMomentView = true
         }
     }
 

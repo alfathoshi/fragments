@@ -12,6 +12,9 @@ struct ActiveMomentView: View {
     var onDismiss: () -> Void
     var onSaveComplete: () -> Void
 
+    var initialCaptureType: FragmentType? = nil
+    var autoOpenEnd: Bool = false
+
     @State private var selectedFragment: Fragment? = nil
     @State private var showCaptureSheet: Bool = false
     @State private var showEndMomentSheet: Bool = false
@@ -21,12 +24,22 @@ struct ActiveMomentView: View {
 
     init(
         momentManager: MomentManager = MomentManager.shared,
+        initialCaptureType: FragmentType? = nil,
+        autoOpenEnd: Bool = false,
         onDismiss: @escaping () -> Void,
         onSaveComplete: @escaping () -> Void
     ) {
         self.momentManager = momentManager
+        self.initialCaptureType = initialCaptureType
+        self.autoOpenEnd = autoOpenEnd
         self.onDismiss = onDismiss
         self.onSaveComplete = onSaveComplete
+        if let initType = initialCaptureType {
+            self._showCaptureSheet = State(initialValue: true)
+            self._captureInitialType = State(initialValue: initType)
+        } else if autoOpenEnd {
+            self._showEndMomentSheet = State(initialValue: true)
+        }
     }
 
     private var session: MomentSession? {
@@ -185,6 +198,17 @@ struct ActiveMomentView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(32)
+            }
+        }
+        .onChange(of: initialCaptureType) { _, newType in
+            if let newType = newType {
+                captureInitialType = newType
+                showCaptureSheet = true
+            }
+        }
+        .onChange(of: autoOpenEnd) { _, shouldOpen in
+            if shouldOpen {
+                showEndMomentSheet = true
             }
         }
     }

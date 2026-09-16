@@ -6,8 +6,41 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5FA8D133305A34F000870B8F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FA8D0F6305A337300870B8F /* WidgetKit.framework */; };
+		5FA8D134305A34F000870B8F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FA8D0F8305A337300870B8F /* SwiftUI.framework */; };
+		5FA8D143305A34F100870B8F /* FragmentsActivityExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5FA8D132305A34F000870B8F /* FragmentsActivityExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5FA8D141305A34F100870B8F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5F35BCEE305461EE00663A7A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5FA8D131305A34F000870B8F;
+			remoteInfo = FragmentsActivityExtensionExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		5FA8D10F305A337500870B8F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				5FA8D143305A34F100870B8F /* FragmentsActivityExtensionExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		5F35BCF6305461EE00663A7A /* fragments.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = fragments.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5FA8D0F6305A337300870B8F /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		5FA8D0F8305A337300870B8F /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		5FA8D132305A34F000870B8F /* FragmentsActivityExtensionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FragmentsActivityExtensionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -18,6 +51,20 @@
 			);
 			target = 5F35BCF5305461EE00663A7A /* fragments */;
 		};
+		5FA8D147305A34F100870B8F /* Exceptions for "FragmentsActivityExtension" folder in "FragmentsActivityExtensionExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5FA8D131305A34F000870B8F /* FragmentsActivityExtensionExtension */;
+		};
+		5FA8D14D305A352600870B8F /* Exceptions for "fragments" folder in "FragmentsActivityExtensionExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Models/MomentActivityAttributes.swift,
+			);
+			target = 5FA8D131305A34F000870B8F /* FragmentsActivityExtensionExtension */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -25,8 +72,17 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				5F35BD03305461EE00663A7A /* Exceptions for "fragments" folder in "fragments" target */,
+				5FA8D14D305A352600870B8F /* Exceptions for "fragments" folder in "FragmentsActivityExtensionExtension" target */,
 			);
 			path = fragments;
+			sourceTree = "<group>";
+		};
+		5FA8D135305A34F000870B8F /* FragmentsActivityExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5FA8D147305A34F100870B8F /* Exceptions for "FragmentsActivityExtension" folder in "FragmentsActivityExtensionExtension" target */,
+			);
+			path = FragmentsActivityExtension;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -39,6 +95,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5FA8D12F305A34F000870B8F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5FA8D134305A34F000870B8F /* SwiftUI.framework in Frameworks */,
+				5FA8D133305A34F000870B8F /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -46,6 +111,8 @@
 			isa = PBXGroup;
 			children = (
 				5F35BCF8305461EE00663A7A /* fragments */,
+				5FA8D135305A34F000870B8F /* FragmentsActivityExtension */,
+				5FA8D0F5305A337300870B8F /* Frameworks */,
 				5F35BCF7305461EE00663A7A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,8 +121,18 @@
 			isa = PBXGroup;
 			children = (
 				5F35BCF6305461EE00663A7A /* fragments.app */,
+				5FA8D132305A34F000870B8F /* FragmentsActivityExtensionExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		5FA8D0F5305A337300870B8F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				5FA8D0F6305A337300870B8F /* WidgetKit.framework */,
+				5FA8D0F8305A337300870B8F /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -68,10 +145,12 @@
 				5F35BCF2305461EE00663A7A /* Sources */,
 				5F35BCF3305461EE00663A7A /* Frameworks */,
 				5F35BCF4305461EE00663A7A /* Resources */,
+				5FA8D10F305A337500870B8F /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				5FA8D142305A34F100870B8F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				5F35BCF8305461EE00663A7A /* fragments */,
@@ -83,6 +162,28 @@
 			productReference = 5F35BCF6305461EE00663A7A /* fragments.app */;
 			productType = "com.apple.product-type.application";
 		};
+		5FA8D131305A34F000870B8F /* FragmentsActivityExtensionExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FA8D144305A34F100870B8F /* Build configuration list for PBXNativeTarget "FragmentsActivityExtensionExtension" */;
+			buildPhases = (
+				5FA8D12E305A34F000870B8F /* Sources */,
+				5FA8D12F305A34F000870B8F /* Frameworks */,
+				5FA8D130305A34F000870B8F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5FA8D135305A34F000870B8F /* FragmentsActivityExtension */,
+			);
+			name = FragmentsActivityExtensionExtension;
+			packageProductDependencies = (
+			);
+			productName = FragmentsActivityExtensionExtension;
+			productReference = 5FA8D132305A34F000870B8F /* FragmentsActivityExtensionExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -90,11 +191,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2660;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					5F35BCF5305461EE00663A7A = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					5FA8D131305A34F000870B8F = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -113,12 +217,20 @@
 			projectRoot = "";
 			targets = (
 				5F35BCF5305461EE00663A7A /* fragments */,
+				5FA8D131305A34F000870B8F /* FragmentsActivityExtensionExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5F35BCF4305461EE00663A7A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5FA8D130305A34F000870B8F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -135,7 +247,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5FA8D12E305A34F000870B8F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5FA8D142305A34F100870B8F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FA8D131305A34F000870B8F /* FragmentsActivityExtensionExtension */;
+			targetProxy = 5FA8D141305A34F100870B8F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		5F35BD05305461EE00663A7A /* Debug */ = {
@@ -151,8 +278,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = fragments/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fragments;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Fragments needs camera access to capture photo and video moments.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fragments needs microphone access to record audio in your video moments.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Fragments requires camera access to capture photos and videos for your moments.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Fragments uses your location to automatically tag captured fragments and moments with your current location.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fragments requires microphone access to record audio for videos and voice memos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -189,8 +317,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = fragments/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fragments;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Fragments needs camera access to capture photo and video moments.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fragments needs microphone access to record audio in your video moments.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Fragments requires camera access to capture photos and videos for your moments.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Fragments uses your location to automatically tag captured fragments and moments with your current location.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fragments requires microphone access to record audio for videos and voice memos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -335,6 +464,68 @@
 			};
 			name = Release;
 		};
+		5FA8D145305A34F100870B8F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C338C32CCY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FragmentsActivityExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = FragmentsActivityExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.alfathoshi.fragments.FragmentsActivityExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5FA8D146305A34F100870B8F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C338C32CCY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FragmentsActivityExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = FragmentsActivityExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.alfathoshi.fragments.FragmentsActivityExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -352,6 +543,15 @@
 			buildConfigurations = (
 				5F35BD05305461EE00663A7A /* Debug */,
 				5F35BD06305461EE00663A7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5FA8D144305A34F100870B8F /* Build configuration list for PBXNativeTarget "FragmentsActivityExtensionExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FA8D145305A34F100870B8F /* Debug */,
+				5FA8D146305A34F100870B8F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

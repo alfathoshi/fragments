@@ -8,6 +8,18 @@
 import SwiftUI
 import SwiftData
 import Observation
+import ActivityKit
+
+/// Lightweight snapshot of an active session stored in UserDefaults.
+/// Only the metadata is persisted — fragments are in-memory and will
+/// be lost on termination, but the session banner can still be restored.
+private struct PersistedSessionInfo: Codable {
+    let id: UUID
+    let startDate: Date
+    let location: String
+}
+
+private let kPersistedSessionKey = "fragments.activeSessionInfo"
 
 /// Central observable manager for managing active Moment sessions and saved Moment collections.
 @Observable
@@ -22,6 +34,8 @@ final class MomentManager {
     var recentlySavedMoment: FolderCollection? = nil
 
     private var modelContext: ModelContext?
+    /// Reference to the currently running Live Activity (nil when no session is active).
+    private var liveActivity: Activity<MomentActivityAttributes>?
 
     var isSessionActive: Bool {
         activeSession != nil
@@ -52,6 +66,40 @@ final class MomentManager {
         let fragmentDescriptor = FetchDescriptor<SDFragment>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         if let sdFragments = try? ctx.fetch(fragmentDescriptor) {
             self.standaloneFragments = sdFragments.map { $0.toFragment() }
+        }
+
+        // Restore active session if a Live Activity is still running
+        // (happens when the app was terminated while a moment was recording)
+        reconnectLiveActivityIfNeeded()
+    }
+
+    /// If a Live Activity for this app is still alive (e.g. after app termination),
+    /// rehydrate the session from UserDefaults so the UI stays consistent.
+    private func reconnectLiveActivityIfNeeded() {
+        // Only reconnect if we don't already have an active session
+        guard activeSession == nil else { return }
+
+        let runningActivities = Activity<MomentActivityAttributes>.activities
+        guard let existing = runningActivities.first else {
+            // No live activity running — clear any stale UserDefaults entry
+            UserDefaults.standard.removeObject(forKey: kPersistedSessionKey)
+            return
+        }
+
+        // Reconnect the activity reference so we can still update/end it
+        liveActivity = existing
+
+        // Restore session metadata from UserDefaults
+        if let data = UserDefaults.standard.data(forKey: kPersistedSessionKey),
+           let info = try? JSONDecoder().decode(PersistedSessionInfo.self, from: data) {
+            // Note: fragments captured before termination are lost (they were in-memory only).
+            // The session banner is restored so the user can End or Continue normally.
+            activeSession = MomentSession(
+                id: info.id,
+                startDate: info.startDate,
+                fragments: [],
+                location: info.location
+            )
         }
     }
 
@@ -127,7 +175,10 @@ final class MomentManager {
     func startSession(location: String? = nil) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
-        activeSession = MomentSession(startDate: Date(), fragments: [], location: resolvedLocation)
+        let newSession = MomentSession(startDate: Date(), fragments: [], location: resolvedLocation)
+        activeSession = newSession
+        persistSession(newSession)
+        startLiveActivity(session: newSession)
     }
 
     /// Adds a newly captured fragment to the active session
@@ -142,6 +193,7 @@ final class MomentManager {
         session.fragments.append(newFragment)
         activeSession = session
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        updateLiveActivity(session: session)
     }
 
     /// Prompts the End Moment sheet to name & categorize the session
@@ -189,6 +241,8 @@ final class MomentManager {
         }
 
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+        clearPersistedSession()
+        endLiveActivity()
         return newCollection
     }
 
@@ -199,5 +253,76 @@ final class MomentManager {
             activeSession = nil
             showEndMomentSheet = false
         }
+        clearPersistedSession()
+        endLiveActivity()
+    }
+
+    // MARK: - Session Persistence Helpers
+
+    /// Saves a lightweight snapshot of the session to UserDefaults so it survives app termination.
+    private func persistSession(_ session: MomentSession) {
+        let info = PersistedSessionInfo(
+            id: session.id,
+            startDate: session.startDate,
+            location: session.location
+        )
+        if let data = try? JSONEncoder().encode(info) {
+            UserDefaults.standard.set(data, forKey: kPersistedSessionKey)
+        }
+    }
+
+    /// Removes the persisted session entry from UserDefaults.
+    private func clearPersistedSession() {
+        UserDefaults.standard.removeObject(forKey: kPersistedSessionKey)
+    }
+
+    // MARK: - Live Activity Helpers
+
+    /// Requests a new Live Activity for the given session.
+    private func startLiveActivity(session: MomentSession) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        // End any stale activity before starting a new one
+        endLiveActivity()
+
+        let attributes = MomentActivityAttributes(
+            startDate: session.startDate,
+            sessionID: session.id.uuidString
+        )
+        let initialState = MomentActivityAttributes.ContentState(
+            fragmentCount: session.fragmentCount,
+            location: session.location
+        )
+
+        do {
+            let activity = try Activity<MomentActivityAttributes>.request(
+                attributes: attributes,
+                content: .init(state: initialState, staleDate: nil),
+                pushType: nil
+            )
+            liveActivity = activity
+        } catch {
+            print("[MomentManager] Failed to start Live Activity: \(error)")
+        }
+    }
+
+    /// Pushes an updated content state to the current Live Activity.
+    private func updateLiveActivity(session: MomentSession) {
+        guard let activity = liveActivity else { return }
+        let updatedState = MomentActivityAttributes.ContentState(
+            fragmentCount: session.fragmentCount,
+            location: session.location
+        )
+        Task {
+            await activity.update(.init(state: updatedState, staleDate: nil))
+        }
+    }
+
+    /// Ends the current Live Activity immediately.
+    private func endLiveActivity() {
+        guard let activity = liveActivity else { return }
+        Task {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        liveActivity = nil
     }
 }
