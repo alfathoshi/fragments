@@ -41,35 +41,8 @@ public struct MomentSession: Identifiable, Hashable {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    /// Converts the session's captured Fragments into FolderItems for the FolderCollection model.
+    /// Converts the session's captured Fragments into FolderItems for the FolderCollection model (capped at 5 items).
     public func createFolderItems() -> [FolderItem] {
-        return fragments.map { fragment in
-            let tag: String
-            let systemIcon: String
-            switch fragment.type {
-            case .photo:
-                tag = "PHOTO"
-                systemIcon = "photo.fill"
-            case .video:
-                tag = "VIDEO"
-                systemIcon = "video.fill"
-            case .note:
-                tag = "NOTE"
-                systemIcon = "text.quote"
-            case .audio:
-                tag = "MEMO"
-                systemIcon = "waveform"
-            }
-
-            return FolderItem(
-                id: fragment.id,
-                title: fragment.title.isEmpty ? "\(fragment.type.displayName) Fragment" : fragment.title,
-                subtitle: fragment.subtitle ?? fragment.formattedTimestamp,
-                systemImage: systemIcon,
-                imageName: fragment.mediaResourceName,
-                gradientColors: fragment.gradientColors,
-                tag: tag
-            )
-        }
+        return Array(fragments.prefix(5)).map { FolderItem(from: $0) }
     }
 }

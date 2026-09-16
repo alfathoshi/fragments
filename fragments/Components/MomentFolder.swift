@@ -252,10 +252,14 @@ public struct MomentFolder<CardContent: View>: View {
 
     // MARK: - Layer 2: Preview Content Layer
 
+    private var displayItems: [FolderItem] {
+        Array(items.prefix(5))
+    }
+
     private var previewContentLayer: some View {
         ZStack {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                cardItemView(item: item, index: index)
+            ForEach(Array(displayItems.enumerated()), id: \.element.id) { index, item in
+                cardItemView(item: item, index: index, totalCount: displayItems.count)
             }
         }
         .frame(width: cardWidth, height: cardHeight)
@@ -264,15 +268,15 @@ public struct MomentFolder<CardContent: View>: View {
     }
 
     @ViewBuilder
-    private func cardItemView(item: FolderItem, index: Int) -> some View {
-        let total = CGFloat(max(items.count, 1))
+    private func cardItemView(item: FolderItem, index: Int, totalCount: Int) -> some View {
+        let total = CGFloat(max(totalCount, 1))
         // Normalized index centered around 0 (e.g. -1, 0, 1 for 3 items)
         let normalizedIndex: CGFloat = total > 1 ? (CGFloat(index) - (total - 1) / 2.0) : 0
 
         // Closed state resting parameters
-        let closedRotation: CGFloat = closedAngle(for: index, total: items.count)
-        let closedX: CGFloat = closedOffsetX(for: index, total: items.count)
-        let closedY: CGFloat = closedOffsetY(for: index, total: items.count)
+        let closedRotation: CGFloat = closedAngle(for: index, total: totalCount)
+        let closedX: CGFloat = closedOffsetX(for: index, total: totalCount)
+        let closedY: CGFloat = closedOffsetY(for: index, total: totalCount)
 
         // Open state fanned parameters
         let openRotation: CGFloat = normalizedIndex * 9.5
@@ -472,9 +476,20 @@ public struct DefaultFolderCardView: View {
     }
 
     public var body: some View {
+        let fragment = item.toFragment()
+        let resolvedImage: UIImage? = {
+            if let imageName = item.imageName, let uiImage = UIImage(named: imageName) {
+                return uiImage
+            }
+            if fragment.type == .video {
+                return fragment.videoThumbnail
+            }
+            return fragment.thumbnailImage ?? fragment.loadedImage
+        }()
+
         ZStack {
             // Card background: image or gradient
-            if let imageName = item.imageName, let uiImage = UIImage(named: imageName) {
+            if let uiImage = resolvedImage {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
@@ -482,7 +497,7 @@ public struct DefaultFolderCardView: View {
                     .clipped()
             } else {
                 LinearGradient(
-                    colors: item.gradientColors,
+                    colors: item.resolvedGradientColors,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )

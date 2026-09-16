@@ -19,6 +19,7 @@ public struct EndMomentSheet: View {
     @State private var selectedCategory: String = "Life"
     @State private var selectedTheme: FolderThemeColor = FolderThemeColor.allThemes[0]
     @State private var location: String
+    @State private var showDiscardConfirmation: Bool = false
 
     private let categoryOptions = [
         "Life", "Travel", "Friends", "Nature", "Creative", "Quiet", "Work"
@@ -155,8 +156,8 @@ public struct EndMomentSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Discard", role: .destructive) {
-                        onCancel()
-                        dismiss()
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        showDiscardConfirmation = true
                     }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.red)
@@ -171,6 +172,19 @@ public struct EndMomentSheet: View {
                     .tint(.primary)
                     
                 }
+            }
+            .alert(
+                "Discard Moment?",
+                isPresented: $showDiscardConfirmation
+            ) {
+                Button("Cancel", role: .cancel) { }
+                Button("Discard", role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    onCancel()
+                    dismiss()
+                }
+            } message: {
+                Text("Are you sure you want to discard this moment? Any captured fragments will not be saved.")
             }
         }
     }

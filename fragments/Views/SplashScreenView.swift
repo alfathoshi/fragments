@@ -93,6 +93,9 @@ public struct SplashScreenView: View {
         }
 
         // 1. Camera Permission
+        #if targetEnvironment(simulator)
+        isCameraGranted = true
+        #else
         let camStatus = AVCaptureDevice.authorizationStatus(for: .video)
         if camStatus == .authorized {
             isCameraGranted = true
@@ -100,10 +103,14 @@ public struct SplashScreenView: View {
             statusText = "Requesting Camera Access..."
             isCameraGranted = await AVCaptureDevice.requestAccess(for: .video)
         }
+        #endif
 
         try? await Task.sleep(nanoseconds: 200_000_000)
 
         // 2. Microphone Permission
+        #if targetEnvironment(simulator)
+        isMicGranted = true
+        #else
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if micStatus == .authorized {
             isMicGranted = true
@@ -111,12 +118,15 @@ public struct SplashScreenView: View {
             statusText = "Requesting Microphone Access..."
             isMicGranted = await AVCaptureDevice.requestAccess(for: .audio)
         }
+        #endif
 
         try? await Task.sleep(nanoseconds: 200_000_000)
 
         // 3. Location Permission
         statusText = "Requesting Location Access..."
+        #if !targetEnvironment(simulator)
         LocationManager.shared.requestLocation()
+        #endif
         let locStatus = LocationManager.shared.authorizationStatus
         isLocationGranted = (locStatus == .authorizedWhenInUse || locStatus == .authorizedAlways)
 

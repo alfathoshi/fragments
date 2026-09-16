@@ -216,11 +216,11 @@ public struct Fragment: Identifiable, Hashable {
         return formatter.localizedString(for: createdAt, relativeTo: Date())
     }
 
-    // Resolves media file in local documents or temporary directory
+    // Resolves media file in local documents, temporary directory, or app bundle
     public var mediaURL: URL? {
-        guard let name = mediaResourceName else { return nil }
+        guard let name = mediaResourceName, !name.isEmpty else { return nil }
         
-        // 1. Full file URL string or absolute path
+        // 1. Direct file URL string or absolute path
         if name.hasPrefix("file://"), let url = URL(string: name), FileManager.default.fileExists(atPath: url.path) {
             return url
         }
@@ -228,18 +228,30 @@ public struct Fragment: Identifiable, Hashable {
             return URL(fileURLWithPath: name)
         }
         
-        // 2. Documents directory file (captured photos / videos)
+        // 2. Extract last path component (handles sandbox container UUID changes across launches)
+        let filename = (name as NSString).lastPathComponent
+        
+        // Documents directory file (captured photos / videos)
         if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let docFile = docsURL.appendingPathComponent(name)
+            let docFile = docsURL.appendingPathComponent(filename)
             if FileManager.default.fileExists(atPath: docFile.path) {
                 return docFile
             }
         }
         
-        // 3. Temporary directory file (recorded video clips)
-        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        // Temporary directory file (recorded video clips)
+        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         if FileManager.default.fileExists(atPath: tempFile.path) {
             return tempFile
+        }
+
+        // 3. App Bundle resource check
+        if let bundleURL = Bundle.main.url(forResource: filename, withExtension: nil) {
+            return bundleURL
+        }
+        let nsFilename = filename as NSString
+        if let bundleURL = Bundle.main.url(forResource: nsFilename.deletingPathExtension, withExtension: nsFilename.pathExtension) {
+            return bundleURL
         }
 
         return nil
@@ -292,9 +304,14 @@ public struct Fragment: Identifiable, Hashable {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 300, height: 360)
-        let time = CMTime(seconds: 0.5, preferredTimescale: 60)
+        generator.maximumSize = CGSize(width: 400, height: 480)
+        let time = CMTime(seconds: 0.1, preferredTimescale: 600)
         if let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) {
+            let img = UIImage(cgImage: cgImage)
+            videoThumbnailCache.setObject(img, forKey: key)
+            return img
+        }
+        if let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) {
             let img = UIImage(cgImage: cgImage)
             videoThumbnailCache.setObject(img, forKey: key)
             return img

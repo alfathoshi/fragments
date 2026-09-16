@@ -320,6 +320,22 @@ struct ContentView: View {
             activeMomentInitialCaptureType = nil
             activeMomentAutoOpenEnd = false
             showActiveMomentView = true
+        } else if url.host == "tab" || url.host == "moments" {
+            let tabParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "name" })?
+                .value ?? (url.host == "moments" ? "moments" : "")
+            if tabParam == "moments" || tabParam == "logs" || url.host == "moments" {
+                withAnimation {
+                    selectedTab = .logs
+                    activeTab = .logs
+                }
+            } else if tabParam == "fragments" {
+                withAnimation {
+                    selectedTab = .fragments
+                    activeTab = .fragments
+                }
+            }
         }
     }
 

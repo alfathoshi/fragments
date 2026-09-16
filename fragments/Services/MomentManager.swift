@@ -59,7 +59,17 @@ final class MomentManager {
         // Load Saved Moments
         let momentDescriptor = FetchDescriptor<SDMoment>(sortBy: [SortDescriptor(\.date, order: .reverse)])
         if let sdMoments = try? ctx.fetch(momentDescriptor) {
-            self.collections = sdMoments.map { $0.toFolderCollection() }
+            // Remove any leftover sample data previously seeded
+            var hasDeletedSample = false
+            for sdMoment in sdMoments where sdMoment.name == "Sanur Beach" {
+                ctx.delete(sdMoment)
+                hasDeletedSample = true
+            }
+            if hasDeletedSample {
+                try? ctx.save()
+            }
+            let validMoments = sdMoments.filter { $0.name != "Sanur Beach" }
+            self.collections = validMoments.map { $0.toFolderCollection() }
         }
         
         // Load Standalone Fragments
@@ -157,6 +167,20 @@ final class MomentManager {
         }
     }
 
+    /// Updates items and layout order for a saved Moment in local state and SwiftData
+    func updateMomentItems(id: UUID, items: [FolderItem]) {
+        if let index = collections.firstIndex(where: { $0.id == id }) {
+            collections[index].items = items
+        }
+        if let ctx = modelContext {
+            let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
+            if let matching = try? ctx.fetch(descriptor).first {
+                matching.updateItems(from: items, in: ctx)
+                try? ctx.save()
+            }
+        }
+    }
+
     /// Deletes a saved Moment from SwiftData and local array
     func deleteMoment(id: UUID) {
         collections.removeAll(where: { $0.id == id })
@@ -168,6 +192,18 @@ final class MomentManager {
                 }
                 try? ctx.save()
             }
+        }
+    }
+
+    /// Adds a saved Moment directly
+    func addCollection(_ collection: FolderCollection) {
+        if !collections.contains(where: { $0.id == collection.id }) {
+            collections.insert(collection, at: 0)
+        }
+        if let ctx = modelContext {
+            let sdMoment = SDMoment(from: collection)
+            ctx.insert(sdMoment)
+            try? ctx.save()
         }
     }
 

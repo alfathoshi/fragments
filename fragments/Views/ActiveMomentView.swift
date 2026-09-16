@@ -85,15 +85,6 @@ struct ActiveMomentView: View {
                         // 3. Floating Orb Dock at the Bottom
                         bottomFloatingOrbDock(session: currentSession)
                             .zIndex(50)
-                    } else {
-                        VStack(spacing: 16) {
-                            Text("No active moment session.")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                            Button("Close") {
-                                onDismiss()
-                            }
-                        }
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)
@@ -105,7 +96,6 @@ struct ActiveMomentView: View {
                         } label: {
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.secondary)
                         }
                     }
 

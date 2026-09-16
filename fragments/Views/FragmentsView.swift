@@ -253,12 +253,12 @@ public struct FragmentsView: View {
             ZStack {
                 // Orbital Rings
                 Circle()
-                    .stroke(Color.primary.opacity(0.1), style: StrokeStyle(lineWidth: 1.5, dash: [4, 6]))
-                    .frame(width: 220, height: 220)
+                    .stroke(Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 1.5, dash: [4, 6]))
+                    .frame(width: 200, height: 200)
 
                 Circle()
-                    .stroke(Color.primary.opacity(0.09), style: StrokeStyle(lineWidth: 1, dash: [3, 8]))
-                    .frame(width: 290, height: 290)
+                    .stroke(Color.primary.opacity(0.06), style: StrokeStyle(lineWidth: 1, dash: [3, 8]))
+                    .frame(width: 260, height: 260)
 
                 // Center Icon
                 VStack(spacing: 6) {

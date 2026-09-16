@@ -313,8 +313,20 @@ public struct CaptureView: View {
     }
 
     private func handleVideoCapture(url: URL?, duration: TimeInterval) {
+        guard let sourceURL = url else { return }
         let formattedDuration = String(format: "%d:%02d", Int(duration) / 60, Int(duration) % 60)
-        let mediaPath = url?.path
+        
+        let filename = "VID_\(UUID().uuidString).mov"
+        var savedResourceName = filename
+        if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let destURL = docsURL.appendingPathComponent(filename)
+            if (try? FileManager.default.copyItem(at: sourceURL, to: destURL)) != nil {
+                savedResourceName = filename
+            } else {
+                savedResourceName = sourceURL.path
+            }
+        }
+        
         let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
         let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
         let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
@@ -322,7 +334,7 @@ public struct CaptureView: View {
             type: .video,
             title: momentTitle != nil ? "\(momentTitle!) Video" : "Video Fragment",
             subtitle: Date().formatted(date: .abbreviated, time: .shortened),
-            mediaResourceName: mediaPath,
+            mediaResourceName: savedResourceName,
             gradientColors: [Color(red: 0.35, green: 0.65, blue: 1.0), Color(red: 0.20, green: 0.45, blue: 0.95)],
             location: resolvedLocation,
             duration: formattedDuration,

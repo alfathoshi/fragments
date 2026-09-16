@@ -52,6 +52,10 @@ public final class CameraService: NSObject, @unchecked Sendable {
     // MARK: - Permissions
 
     public func checkPermissions() {
+        #if targetEnvironment(simulator)
+        self.isAuthorized = true
+        self.isUnavailable = true
+        #else
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             self.isAuthorized = true
@@ -65,10 +69,12 @@ public final class CameraService: NSObject, @unchecked Sendable {
                     }
                 }
             }
-        default:
+        case .denied, .restricted:
             self.isAuthorized = false
-            self.isUnavailable = true
+        @unknown default:
+            self.isAuthorized = false
         }
+        #endif
     }
 
     // MARK: - Session Setup

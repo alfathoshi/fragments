@@ -24,16 +24,24 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, @unchec
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         self.authorizationStatus = locationManager.authorizationStatus
+        #if !targetEnvironment(simulator)
         requestLocation()
+        #else
+        self.currentLocationName = "Sanur Beach, Bali"
+        #endif
     }
 
     public func requestLocation() {
+        #if targetEnvironment(simulator)
+        self.currentLocationName = "Sanur Beach, Bali"
+        #else
         let status = locationManager.authorizationStatus
         if status == .notDetermined {
             locationManager.requestWhenInUseAuthorization()
         } else if status == .authorizedWhenInUse || status == .authorizedAlways {
             locationManager.requestLocation()
         }
+        #endif
     }
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

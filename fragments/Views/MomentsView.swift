@@ -51,7 +51,9 @@ struct MomentsView: View {
     // MARK: - State
 
     var momentManager: MomentManager = MomentManager.shared
-    @State private var selectedCollection: FolderCollection? = nil
+    @State private var isEditing: Bool = false
+    @State private var editingCollection: FolderCollection? = nil
+    @State private var selectedDetailCollection: FolderCollection? = nil
 
     private let columns = [
         GridItem(.flexible(), spacing: 18),
@@ -71,7 +73,7 @@ struct MomentsView: View {
                             LazyVGrid(columns: columns, spacing: 24) {
                                 ForEach(momentManager.collections) { collection in
                                     Button {
-                                        selectedCollection = collection
+                                        handleMomentSelection(collection)
                                     } label: {
                                         VStack(alignment: .center, spacing: 12) {
                                             // Folder in closed resting preview state
@@ -81,9 +83,28 @@ struct MomentsView: View {
                                                 size: CGSize(width: 168, height: 166),
                                                 folderColor: collection.color,
                                                 onTapFolder: {
-                                                    selectedCollection = collection
+                                                    handleMomentSelection(collection)
                                                 }
                                             )
+                                            .overlay(alignment: .topTrailing) {
+                                                if isEditing {
+                                                    Circle()
+                                                        .fill(.ultraThinMaterial)
+                                                        .frame(width: 30, height: 30)
+                                                        .overlay(
+                                                            Circle()
+                                                                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                                                        )
+                                                        .overlay(
+                                                            Image(systemName: "pencil")
+                                                                .font(.system(size: 13, weight: .bold))
+                                                                .foregroundStyle(Color.primary)
+                                                        )
+                                                        .shadow(color: Color.black.opacity(0.15), radius: 6, y: 2)
+                                                        .offset(x: 6, y: -6)
+                                                        .transition(.scale.combined(with: .opacity))
+                                                }
+                                            }
 
                                             // Folder metadata text under card
                                             VStack(spacing: 3) {
@@ -115,18 +136,60 @@ struct MomentsView: View {
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
             .navigationTitle("Moments")
             .toolbarTitleDisplayMode(.inlineLarge)
-            .blur(radius: selectedCollection != nil ? 16 : 0)
-            .animation(.easeInOut(duration: 0.28), value: selectedCollection != nil)
+            .toolbar {
+                if !momentManager.collections.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                isEditing.toggle()
+                            }
+                        } label: {
+                            Text(isEditing ? "Done" : "Edit")
+                                .font(.system(size: 16, weight: isEditing ? .bold : .medium))
+                        }
+                    }
+                }
+            }
+            .blur(radius: editingCollection != nil ? 16 : 0)
+            .animation(.easeInOut(duration: 0.28), value: editingCollection != nil)
             .animation(.spring(response: 0.4, dampingFraction: 0.78), value: momentManager.collections.count)
-            // Bottom Sheet opened on tap
-            .sheet(item: $selectedCollection) { collection in
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditing)
+            // Bottom Sheet opened when Edit mode is active and moment is picked
+            .sheet(item: $editingCollection) { collection in
                 FolderDetailBottomSheet(
                     collection: collection,
                     onUpdateColor: { newColor in
                         momentManager.updateMomentColor(id: collection.id, color: newColor)
+                    },
+                    onDelete: {
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                            momentManager.deleteMoment(id: collection.id)
+                        }
                     }
                 )
             }
+            // Navigation destination pushed on moment tap (Normal mode)
+            .navigationDestination(item: $selectedDetailCollection) { collection in
+                let currentCollection = momentManager.collections.first(where: { $0.id == collection.id }) ?? collection
+                MomentDetailView(
+                    collection: currentCollection,
+                    onUpdateCollection: { updated in
+                        momentManager.updateMomentItems(id: updated.id, items: updated.items)
+                        if let idx = momentManager.collections.firstIndex(where: { $0.id == updated.id }) {
+                            momentManager.collections[idx] = updated
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    private func handleMomentSelection(_ collection: FolderCollection) {
+        if isEditing {
+            editingCollection = collection
+        } else {
+            selectedDetailCollection = collection
         }
     }
 
@@ -180,16 +243,23 @@ struct MomentsView: View {
 public struct FolderDetailBottomSheet: View {
     public let collection: FolderCollection
     public var onUpdateColor: ((Color?) -> Void)? = nil
+    public var onDelete: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var folderColor: Color?
     @State private var showColorPicker = false
     @State private var selectedFragment: FolderItem? = nil
     @State private var isFolderOpen = false
     @State private var sheetDetent: PresentationDetent = .fraction(0.38)
+    @State private var showDeleteConfirmation = false
 
-    public init(collection: FolderCollection, onUpdateColor: ((Color?) -> Void)? = nil) {
+    public init(
+        collection: FolderCollection,
+        onUpdateColor: ((Color?) -> Void)? = nil,
+        onDelete: (() -> Void)? = nil
+    ) {
         self.collection = collection
         self.onUpdateColor = onUpdateColor
+        self.onDelete = onDelete
         self._folderColor = State(initialValue: collection.color)
     }
 
@@ -209,7 +279,7 @@ public struct FolderDetailBottomSheet: View {
                                 selectedFragment = item
                             }
                         )
-                        .padding(.top, 60)
+                        .padding(.top, 80)
                         .padding(.bottom, 16)
                     }
                     .frame(maxWidth: .infinity)
@@ -261,21 +331,36 @@ public struct FolderDetailBottomSheet: View {
                     } label: {
                             Image(systemName: "paintpalette.fill")
                                 .font(.system(size: 20))
-                                .foregroundStyle(.secondary)
                         
                     }
                     .accessibilityLabel("Customize folder color")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        dismiss()
+                    Button(role: .destructive) {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        showDeleteConfirmation = true
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        Image(systemName: "trash.fill")
                             .font(.system(size: 20))
-                            .foregroundStyle(.secondary)
                     }
+                    .tint(.red)
+                    .accessibilityLabel("Delete moment")
                 }
+            }
+            .alert("Delete Moment?", isPresented: $showDeleteConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    if let onDelete = onDelete {
+                        onDelete()
+                    } else {
+                        MomentManager.shared.deleteMoment(id: collection.id)
+                    }
+                    dismiss()
+                }
+            } message: {
+                Text("Are you sure you want to delete \"\(collection.name)\"? This action cannot be undone.")
             }
             .blur(radius: showColorPicker ? 16 : 0)
             .animation(.easeInOut(duration: 0.28), value: showColorPicker)
@@ -449,7 +534,7 @@ public struct FolderColorPickerSheet: View {
     }
 
     private var previewItems: [FolderItem] {
-        items.isEmpty ? FolderItem.samplePhotos : items
+        items
     }
 
     public var body: some View {
