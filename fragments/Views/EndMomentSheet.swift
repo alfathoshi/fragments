@@ -15,15 +15,7 @@ public struct EndMomentSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var momentName: String = ""
-    @State private var selectedCategory: String = "Life"
-    @State private var selectedTheme: FolderThemeColor = FolderThemeColor.allThemes[0]
-    @State private var location: String
-    @State private var showDiscardConfirmation: Bool = false
-
-    private let categoryOptions = [
-        "Life", "Travel", "Friends", "Nature", "Creative", "Quiet", "Work"
-    ]
+    @State private var viewModel: EndMomentViewModel
 
     public init(
         session: MomentSession,
@@ -33,7 +25,7 @@ public struct EndMomentSheet: View {
         self.session = session
         self.onSave = onSave
         self.onCancel = onCancel
-        self._location = State(initialValue: session.location)
+        self._viewModel = State(initialValue: EndMomentViewModel(session: session))
     }
 
     public var body: some View {
@@ -54,7 +46,7 @@ public struct EndMomentSheet: View {
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                                 .foregroundStyle(.secondary)
 
-                            TextField(defaultPlaceholder, text: $momentName)
+                            TextField(viewModel.defaultPlaceholder, text: $viewModel.momentName)
                                 .font(.system(size: 16, weight: .medium))
                                 .padding(14)
                                 .background(
@@ -77,23 +69,23 @@ public struct EndMomentSheet: View {
 
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
-                                    ForEach(categoryOptions, id: \.self) { cat in
+                                    ForEach(viewModel.categoryOptions, id: \.self) { cat in
                                         Button {
                                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                            selectedCategory = cat
+                                            viewModel.selectedCategory = cat
                                         } label: {
                                             Text(cat)
-                                                .font(.system(size: 13, weight: selectedCategory == cat ? .bold : .medium, design: .rounded))
+                                                .font(.system(size: 13, weight: viewModel.selectedCategory == cat ? .bold : .medium, design: .rounded))
                                                 .padding(.horizontal, 14)
                                                 .padding(.vertical, 8)
                                                 .background(
-                                                    selectedCategory == cat
-                                                        ? AnyShapeStyle(selectedTheme.color ?? Color.primary)
+                                                    viewModel.selectedCategory == cat
+                                                        ? AnyShapeStyle(viewModel.selectedTheme.color ?? Color.primary)
                                                         : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
                                                     in: Capsule()
                                                 )
                                                 .foregroundStyle(
-                                                    selectedCategory == cat
+                                                    viewModel.selectedCategory == cat
                                                         ?  Color.white
                                                         : Color.primary
                                                 )
@@ -115,7 +107,7 @@ public struct EndMomentSheet: View {
                                 ForEach(FolderThemeColor.allThemes) { theme in
                                     Button {
                                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                        selectedTheme = theme
+                                        viewModel.selectedTheme = theme
                                     } label: {
                                         ZStack {
                                             Circle()
@@ -129,7 +121,7 @@ public struct EndMomentSheet: View {
                                                 .frame(width: 38, height: 38)
                                                 .shadow(color: (theme.color ?? Color.gray).opacity(0.3), radius: 4, y: 2)
 
-                                            if selectedTheme.id == theme.id {
+                                            if viewModel.selectedTheme.id == theme.id {
                                                 Image(systemName: "checkmark")
                                                     .font(.system(size: 14, weight: .bold))
                                                     .foregroundStyle(.white)
@@ -137,7 +129,7 @@ public struct EndMomentSheet: View {
                                         }
                                         .overlay(
                                             Circle()
-                                                .stroke(selectedTheme.id == theme.id ? Color.primary : Color.clear, lineWidth: 2)
+                                                .stroke(viewModel.selectedTheme.id == theme.id ? Color.primary : Color.clear, lineWidth: 2)
                                                 .padding(-3)
                                         )
                                     }
@@ -157,7 +149,7 @@ public struct EndMomentSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Discard", role: .destructive) {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        showDiscardConfirmation = true
+                        viewModel.showDiscardConfirmation = true
                     }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.red)
@@ -165,7 +157,8 @@ public struct EndMomentSheet: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") {
-                        handleSave()
+                        viewModel.handleSave(onSave: onSave)
+                        dismiss()
                     }
                     .font(.body.weight(.semibold))
                     .buttonStyle(.glassProminent)
@@ -175,7 +168,7 @@ public struct EndMomentSheet: View {
             }
             .alert(
                 "Discard Moment?",
-                isPresented: $showDiscardConfirmation
+                isPresented: $viewModel.showDiscardConfirmation
             ) {
                 Button("Cancel", role: .cancel) { }
                 Button("Discard", role: .destructive) {
@@ -192,7 +185,7 @@ public struct EndMomentSheet: View {
     // MARK: - Hero Summary Card
     private var sessionHeroCard: some View {
         HStack(spacing: 18) {
-            ThinkingOrb(state: .connecting, size: 56, tint: selectedTheme.color)
+            ThinkingOrb(state: .connecting, size: 56, tint: viewModel.selectedTheme.color)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Moment Completed")
@@ -233,26 +226,6 @@ public struct EndMomentSheet: View {
         .padding(.horizontal, 20)
     }
 
-    private var defaultPlaceholder: String {
-        let hour = Calendar.current.component(.hour, from: session.startDate)
-        let timePeriod: String
-        switch hour {
-        case 5..<12: timePeriod = "Morning"
-        case 12..<17: timePeriod = "Afternoon"
-        case 17..<21: timePeriod = "Evening"
-        default: timePeriod = "Night"
-        }
-        return "\(timePeriod) \(selectedCategory)"
-    }
-
-    private func handleSave() {
-        let name = momentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? defaultPlaceholder
-            : momentName.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        onSave(name, selectedCategory, selectedTheme.color, location)
-        dismiss()
-    }
 }
 
 #if DEBUG

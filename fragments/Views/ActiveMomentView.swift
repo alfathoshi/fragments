@@ -8,18 +8,10 @@
 import SwiftUI
 
 struct ActiveMomentView: View {
-    var momentManager: MomentManager = MomentManager.shared
     var onDismiss: () -> Void
     var onSaveComplete: () -> Void
 
-    var initialCaptureType: FragmentType? = nil
-    var autoOpenEnd: Bool = false
-
-    @State private var selectedFragment: Fragment? = nil
-    @State private var showCaptureSheet: Bool = false
-    @State private var showEndMomentSheet: Bool = false
-    @State private var captureInitialType: FragmentType = .photo
-    @State private var orbPulse: Bool = false
+    @State private var viewModel: ActiveMomentViewModel
     @Environment(\.colorScheme) private var colorScheme
 
     init(
@@ -29,21 +21,13 @@ struct ActiveMomentView: View {
         onDismiss: @escaping () -> Void,
         onSaveComplete: @escaping () -> Void
     ) {
-        self.momentManager = momentManager
-        self.initialCaptureType = initialCaptureType
-        self.autoOpenEnd = autoOpenEnd
         self.onDismiss = onDismiss
         self.onSaveComplete = onSaveComplete
-        if let initType = initialCaptureType {
-            self._showCaptureSheet = State(initialValue: true)
-            self._captureInitialType = State(initialValue: initType)
-        } else if autoOpenEnd {
-            self._showEndMomentSheet = State(initialValue: true)
-        }
-    }
-
-    private var session: MomentSession? {
-        momentManager.activeSession
+        self._viewModel = State(initialValue: ActiveMomentViewModel(
+            momentManager: momentManager,
+            initialCaptureType: initialCaptureType,
+            autoOpenEnd: autoOpenEnd
+        ))
     }
 
     var body: some View {
@@ -53,7 +37,7 @@ struct ActiveMomentView: View {
                     // Dark / Atmospheric background canvas
                     Color(uiColor: .systemBackground).ignoresSafeArea()
 
-                    if let currentSession = session {
+                    if let currentSession = viewModel.session {
                         VStack(spacing: 0) {
                             // 1. Top Session Status Header
                             sessionHeader(session: currentSession)
@@ -65,7 +49,7 @@ struct ActiveMomentView: View {
                                         fragments: currentSession.fragments,
                                         onSelectFragment: { frag in
                                             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                                                selectedFragment = frag
+                                                viewModel.selectedFragment = frag
                                             }
                                         }
                                     )
@@ -102,33 +86,30 @@ struct ActiveMomentView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            showEndMomentSheet = true
+                            viewModel.showEndMomentSheet = true
                         } label: {
-                            Text("End Moment")
+                            Text("Save Moment")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
                         }
                         .buttonStyle(.glassProminent)
-                        .tint(.red)
+                        .tint(.primary)
                         .shadow(color: Color.red.opacity(0.35), radius: 5, y: 2)
                     }
                 }
             }
-            .blur(radius: selectedFragment != nil ? 20 : 0)
-            .animation(.easeInOut(duration: 0.28), value: selectedFragment != nil)
+            .blur(radius: viewModel.selectedFragment != nil ? 20 : 0)
+            .animation(.easeInOut(duration: 0.28), value: viewModel.selectedFragment != nil)
 
             // Fragment Detail Modal
-            if let frag = selectedFragment {
+            if let frag = viewModel.selectedFragment {
                 FragmentDetailView(
                     fragment: frag,
                     onDelete: { fragmentToDelete in
-                        if let idx = momentManager.activeSession?.fragments.firstIndex(where: { $0.id == fragmentToDelete.id }) {
-                            momentManager.activeSession?.fragments.remove(at: idx)
-                        }
-                        selectedFragment = nil
+                        viewModel.deleteFragmentFromSession(fragmentToDelete)
                     },
                     onDismiss: {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
-                            selectedFragment = nil
+                            viewModel.dismissSelectedFragment()
                         }
                     }
                 )
@@ -137,51 +118,49 @@ struct ActiveMomentView: View {
             }
         }
         // Direct FullScreenCover for CaptureView from within ActiveMomentView
-        .fullScreenCover(isPresented: $showCaptureSheet) {
+        .fullScreenCover(isPresented: $viewModel.showCaptureSheet) {
             CaptureView(
                 initialMode: {
-                    switch captureInitialType {
+                    switch viewModel.captureInitialType {
                     case .photo: return .photo
                     case .video: return .video
                     case .note: return .note
                     case .audio: return .memo
                     }
                 }(),
-                activeSession: momentManager.activeSession,
+                activeSession: viewModel.momentManager.activeSession,
                 onCaptureFragment: { newFragment in
-                    // Only add to active moment session
-                    momentManager.addFragment(newFragment)
-                    showCaptureSheet = false
+                    viewModel.handleCapturedFragment(newFragment)
                 },
                 onClose: {
-                    showCaptureSheet = false
+                    viewModel.showCaptureSheet = false
                 },
                 onEndActiveMoment: {
-                    showCaptureSheet = false
+                    viewModel.showCaptureSheet = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showEndMomentSheet = true
+                        viewModel.showEndMomentSheet = true
                     }
                 }
             )
         }
         // Direct Sheet for EndMomentSheet from within ActiveMomentView
-        .sheet(isPresented: $showEndMomentSheet) {
-            if let currentSession = momentManager.activeSession {
+        .sheet(isPresented: $viewModel.showEndMomentSheet) {
+            if let currentSession = viewModel.momentManager.activeSession {
                 EndMomentSheet(
                     session: currentSession,
                     onSave: { name, category, color, location in
-                        momentManager.finishSession(
+                        viewModel.momentManager.finishSession(
                             name: name,
                             category: category,
                             color: color,
                             location: location
                         )
-                        showEndMomentSheet = false
+                        viewModel.showEndMomentSheet = false
                         onSaveComplete()
                     },
                     onCancel: {
-                        momentManager.cancelSession()
-                        showEndMomentSheet = false
+                        viewModel.momentManager.cancelSession()
+                        viewModel.showEndMomentSheet = false
                         onDismiss()
                     }
                 )
@@ -190,15 +169,14 @@ struct ActiveMomentView: View {
                 .presentationCornerRadius(32)
             }
         }
-        .onChange(of: initialCaptureType) { _, newType in
+        .onChange(of: viewModel.initialCaptureType) { _, newType in
             if let newType = newType {
-                captureInitialType = newType
-                showCaptureSheet = true
+                viewModel.openCaptureSheet(type: newType)
             }
         }
-        .onChange(of: autoOpenEnd) { _, shouldOpen in
+        .onChange(of: viewModel.autoOpenEnd) { _, shouldOpen in
             if shouldOpen {
-                showEndMomentSheet = true
+                viewModel.showEndMomentSheet = true
             }
         }
     }
@@ -242,8 +220,7 @@ struct ActiveMomentView: View {
     private func bottomFloatingOrbDock(session: MomentSession) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            captureInitialType = .photo
-            showCaptureSheet = true
+            viewModel.openCaptureSheet(type: .photo)
         } label: {
             HStack(spacing: 14) {
                 // Floating ThinkingOrb (working state)
@@ -275,7 +252,7 @@ struct ActiveMomentView: View {
         .padding(.horizontal, 24)
         .onAppear {
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                orbPulse = true
+                viewModel.orbPulse = true
             }
         }
     }

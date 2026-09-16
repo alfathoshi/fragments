@@ -460,13 +460,6 @@ public struct CustomNoteView: View {
             } content: {
                 Image(systemName: "plus")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: activeColor.gradient,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
             }
             .accessibilityLabel("Save Memo Fragment")
 

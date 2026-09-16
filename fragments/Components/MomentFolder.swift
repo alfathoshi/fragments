@@ -556,58 +556,6 @@ public struct DefaultFolderCardView: View {
     }
 }
 
-// MARK: - Previews
-
-#if DEBUG
-#Preview("3D Folder States - Light") {
-    FolderView_Previews.FolderPreviewDemoView()
-}
-
-#Preview("3D Folder States - Dark") {
-    FolderView_Previews.FolderPreviewDemoView()
-        .preferredColorScheme(.dark)
-}
-
-struct FolderView_Previews: PreviewProvider {
-    static var previews: some View {
-        FolderPreviewDemoView()
-    }
-
-    struct FolderPreviewDemoView: View {
-        @State private var isOpen1 = false
-        @State private var isOpen2 = true
-
-        var body: some View {
-            VStack(spacing: 40) {
-                HStack(spacing: 24) {
-                    VStack(spacing: 12) {
-                        MomentFolder(
-                            items: FolderItem.samplePhotos,
-                            isOpen: $isOpen1
-                        )
-                        Text("Tap to Open")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    VStack(spacing: 12) {
-                        MomentFolder(
-                            items: FolderItem.sampleDocuments,
-                            isOpen: $isOpen2
-                        )
-                        Text("Tap to Close")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
-        }
-    }
-}
-#endif
-
 // MARK: - Procedural Noise Texture (Figma Seed: 4517)
 
 public enum NoiseTexture {

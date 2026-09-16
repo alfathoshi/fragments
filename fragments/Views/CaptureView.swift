@@ -36,15 +36,12 @@ public enum CaptureMode: String, CaseIterable, Identifiable {
 
 public struct CaptureView: View {
     public var isActive: Bool = true
-    public var activeMoment: FolderCollection? = nil
-    public var activeSession: MomentSession? = nil
-    public var onCaptureFragment: ((Fragment) -> Void)? = nil
     public var onClose: (() -> Void)? = nil
     public var onEndActiveMoment: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    @State private var selectedMode: CaptureMode
+    @State private var viewModel: CaptureViewModel
     @Namespace private var modeAnimation
     @State private var ambientGlow: CGFloat = 0.4
 
@@ -58,13 +55,16 @@ public struct CaptureView: View {
         onEndActiveMoment: (() -> Void)? = nil
     ) {
         self.isActive = isActive
-        self._selectedMode = State(initialValue: initialMode)
-        self.activeMoment = activeMoment
-        self.activeSession = activeSession
-        self.onCaptureFragment = onCaptureFragment
+        self._viewModel = State(initialValue: CaptureViewModel(
+            initialMode: initialMode,
+            activeMoment: activeMoment,
+            activeSession: activeSession,
+            onCaptureFragment: onCaptureFragment
+        ))
         self.onClose = onClose
         self.onEndActiveMoment = onEndActiveMoment
     }
+
 
     public var body: some View {
         NavigationStack {
@@ -80,12 +80,12 @@ public struct CaptureView: View {
 
                     // 3. Mode Content (Photo / Video / Note / Memo)
                     ZStack {
-                        switch selectedMode {
+                        switch viewModel.selectedMode {
                         case .photo:
                             CustomCamera(
                                 isActive: isActive,
                                 onCapturedPhoto: { image, fileURL in
-                                    handlePhotoCapture(image: image, fileURL: fileURL)
+                                    viewModel.handlePhotoCapture(image: image, fileURL: fileURL)
                                 },
                                 onClose: onClose
                             )
@@ -96,7 +96,7 @@ public struct CaptureView: View {
                             CustomVideoCamera(
                                 isActive: isActive,
                                 onCapturedVideo: { url, duration in
-                                    handleVideoCapture(url: url, duration: duration)
+                                    viewModel.handleVideoCapture(url: url, duration: duration)
                                 },
                                 onClose: onClose
                             )
@@ -106,7 +106,7 @@ public struct CaptureView: View {
                         case .note:
                             CustomNoteView(
                                 onSaveNote: { title, text, color in
-                                    handleNoteCapture(title: title, text: text, color: color)
+                                    viewModel.handleNoteCapture(title: title, text: text, color: color)
                                 },
                                 onClose: onClose
                             )
@@ -116,7 +116,7 @@ public struct CaptureView: View {
                         case .memo:
                             CustomMemoView(
                                 onSaveMemo: { fileURL, duration, waveform, title, color in
-                                    handleMemoCapture(fileURL: fileURL, duration: duration, waveform: waveform, title: title, color: color)
+                                    viewModel.handleMemoCapture(fileURL: fileURL, duration: duration, waveform: waveform, title: title, color: color)
                                 },
                                 onClose: onClose
                             )
@@ -125,7 +125,7 @@ public struct CaptureView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .animation(.easeInOut(duration: 0.20), value: selectedMode)
+                    .animation(.easeInOut(duration: 0.20), value: viewModel.selectedMode)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
@@ -162,16 +162,16 @@ public struct CaptureView: View {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                        selectedMode = mode
+                        viewModel.selectedMode = mode
                     }
                 } label: {
                     Text(mode.title)
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(selectedMode == mode ? (colorScheme == .dark ? Color.white : Color(red: 0.12, green: 0.12, blue: 0.14)) : Color.secondary)
+                        .foregroundStyle(viewModel.selectedMode == mode ? (colorScheme == .dark ? Color.white : Color(red: 0.12, green: 0.12, blue: 0.14)) : Color.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                         .background {
-                            if selectedMode == mode {
+                            if viewModel.selectedMode == mode {
                                 Capsule()
                                     .fill(colorScheme == .dark ? Color(red: 0.22, green: 0.22, blue: 0.24) : Color.white)
                                     .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.14), radius: 5, x: 0, y: 2)
@@ -291,109 +291,7 @@ public struct CaptureView: View {
 
 
 
-    // MARK: - Capture Handlers
 
-    private func handlePhotoCapture(image: UIImage?, fileURL: URL?) {
-        let mediaPath = fileURL?.path
-        let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
-        let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
-        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
-        let fragment = Fragment(
-            type: .photo,
-            title: momentTitle != nil ? "\(momentTitle!) Photo" : "Photo Fragment",
-            subtitle: Date().formatted(date: .abbreviated, time: .shortened),
-            mediaResourceName: mediaPath,
-            gradientColors: [Color(red: 1.0, green: 0.55, blue: 0.35), Color(red: 0.95, green: 0.25, blue: 0.55)],
-            location: resolvedLocation,
-            phi: coords.phi,
-            theta: coords.theta,
-            radiusFactor: coords.radiusFactor
-        )
-        onCaptureFragment?(fragment)
-    }
-
-    private func handleVideoCapture(url: URL?, duration: TimeInterval) {
-        guard let sourceURL = url else { return }
-        let formattedDuration = String(format: "%d:%02d", Int(duration) / 60, Int(duration) % 60)
-        
-        let filename = "VID_\(UUID().uuidString).mov"
-        var savedResourceName = filename
-        if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let destURL = docsURL.appendingPathComponent(filename)
-            if (try? FileManager.default.copyItem(at: sourceURL, to: destURL)) != nil {
-                savedResourceName = filename
-            } else {
-                savedResourceName = sourceURL.path
-            }
-        }
-        
-        let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
-        let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
-        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
-        let fragment = Fragment(
-            type: .video,
-            title: momentTitle != nil ? "\(momentTitle!) Video" : "Video Fragment",
-            subtitle: Date().formatted(date: .abbreviated, time: .shortened),
-            mediaResourceName: savedResourceName,
-            gradientColors: [Color(red: 0.35, green: 0.65, blue: 1.0), Color(red: 0.20, green: 0.45, blue: 0.95)],
-            location: resolvedLocation,
-            duration: formattedDuration,
-            phi: coords.phi,
-            theta: coords.theta,
-            radiusFactor: coords.radiusFactor
-        )
-        onCaptureFragment?(fragment)
-    }
-
-    private func handleNoteCapture(title: String, text: String, color: Color) {
-        let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
-        let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
-        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? (momentTitle != nil ? "\(momentTitle!) Note" : "Memo Fragment")
-            : title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
-
-        let fragment = Fragment(
-            type: .note,
-            title: resolvedTitle,
-            subtitle: Date().formatted(date: .abbreviated, time: .shortened),
-            text: text,
-            gradientColors: [color, color.opacity(0.85)],
-            location: resolvedLocation,
-            phi: coords.phi,
-            theta: coords.theta,
-            radiusFactor: coords.radiusFactor
-        )
-        onCaptureFragment?(fragment)
-    }
-
-    private func handleMemoCapture(fileURL: URL?, duration: TimeInterval, waveform: [CGFloat], title: String, color: Color) {
-        let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
-        let mins = Int(duration) / 60
-        let secs = Int(duration) % 60
-        let formattedDuration = String(format: "%d:%02d", mins, secs)
-
-        let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
-        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? (momentTitle != nil ? "\(momentTitle!) Memo" : "Voice Memo")
-            : title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
-
-        let fragment = Fragment(
-            type: .audio,
-            title: resolvedTitle,
-            subtitle: Date().formatted(date: .abbreviated, time: .shortened),
-            mediaResourceName: fileURL?.path,
-            gradientColors: [color, color.opacity(0.80)],
-            location: resolvedLocation,
-            duration: formattedDuration,
-            audioWaveform: waveform,
-            phi: coords.phi,
-            theta: coords.theta,
-            radiusFactor: coords.radiusFactor
-        )
-        onCaptureFragment?(fragment)
-    }
 }
 
 #if DEBUG

@@ -152,12 +152,23 @@ public struct CustomVideoCamera: View {
 
     private var topControlsBar: some View {
         HStack(spacing: 0) {
-            // Left: Camera Flip Button (62 pt, rotating SF Symbol arrow.triangle.2.circlepath)
-            CameraFlipButton(isFrontCamera: $isFrontCamera) {
-                cameraService.flipCamera()
-                onFlipCamera?(isFrontCamera)
+            if !isFrontCamera {
+                // Right: Video Torch / Light Button (62 pt)
+                TactileCircularButton(
+                    systemImage: isTorchOn ? "bolt.fill" : "bolt.slash.fill",
+                    iconColor: isTorchOn ? Color.yellow : (colorScheme == .dark ? .white : .black),
+                    keycapColor: isTorchOn ? (colorScheme == .dark ? Color(red: 0.32, green: 0.30, blue: 0.14) : Color(red: 0.98, green: 0.97, blue: 0.90)) : nil,
+                    size: 62,
+                    iconSize: 22,
+                    iconWeight: .bold,
+                    isActive: isTorchOn
+                ) {
+                    toggleTorch()
+                }
+                .accessibilityLabel(isTorchOn ? "Video Torch On" : "Video Torch Off")
+                
             }
-
+            
             Spacer(minLength: 0)
 
             // Right: 2-Button Zoom Switch (115 × 48 pt, 1x / 2x selection)
@@ -364,20 +375,14 @@ public struct CustomVideoCamera: View {
             
 
             Spacer(minLength: 0)
-
-            // Right: Video Torch / Light Button (62 pt)
-            TactileCircularButton(
-                systemImage: isTorchOn ? "bolt.fill" : "bolt.slash.fill",
-                iconColor: isTorchOn ? Color.yellow : (colorScheme == .dark ? .white : .black),
-                keycapColor: isTorchOn ? (colorScheme == .dark ? Color(red: 0.32, green: 0.30, blue: 0.14) : Color(red: 0.98, green: 0.97, blue: 0.90)) : nil,
-                size: 62,
-                iconSize: 22,
-                iconWeight: .bold,
-                isActive: isTorchOn
-            ) {
-                toggleTorch()
+            
+            // Left: Camera Flip Button (62 pt, rotating SF Symbol arrow.triangle.2.circlepath)
+            CameraFlipButton(isFrontCamera: $isFrontCamera) {
+                cameraService.flipCamera()
+                onFlipCamera?(isFrontCamera)
             }
-            .accessibilityLabel(isTorchOn ? "Video Torch On" : "Video Torch Off")
+
+            
         }
         .padding(.horizontal, 24)
     }

@@ -9,28 +9,12 @@ import SwiftUI
 
 public struct FragmentsView: View {
     // MARK: - State
-
-    var momentManager: MomentManager = MomentManager.shared
-    @State private var fragments: [Fragment] = []
-    @State private var selectedFilter: FragmentType? = nil
-    @Binding public var selectedFragment: Fragment?
-    @State private var showQuickCaptureSheet: Bool = false
     
-    // Entering animation state for newly captured fragment
-    @State private var enteringFragment: Fragment? = nil
-    @State private var enteringStep: Int = 0 // 0: foreground float, 1: traveling to sphere, 2: settled
-    @State private var toastMessage: String? = nil
-
+    @Binding public var selectedFragment: Fragment?
     @Binding public var incomingNewFragment: Fragment?
     @Environment(\.colorScheme) private var colorScheme
-
-    // Filtered fragments
-    private var displayedFragments: [Fragment] {
-        if let filter = selectedFilter {
-            return fragments.filter { $0.type == filter }
-        }
-        return fragments
-    }
+    
+    @State private var viewModel: FragmentsViewModel
 
     public init(
         incomingNewFragment: Binding<Fragment?> = .constant(nil),
@@ -39,7 +23,7 @@ public struct FragmentsView: View {
     ) {
         self._incomingNewFragment = incomingNewFragment
         self._selectedFragment = selectedFragment
-        self._fragments = State(initialValue: initialFragments)
+        self._viewModel = State(initialValue: FragmentsViewModel(initialFragments: initialFragments))
     }
 
     public var body: some View {
@@ -51,18 +35,18 @@ public struct FragmentsView: View {
                 
                 VStack(spacing: 0) {
                     // Type Filter Pills (only shown when fragments exist)
-                    if !fragments.isEmpty {
+                    if !viewModel.fragments.isEmpty {
                         filterBar
                     }
                     
                     // Hero Content: 3D Spatial Sphere or Empty State
                     ZStack {
-                        if fragments.isEmpty {
+                        if viewModel.fragments.isEmpty {
                             emptyStateView
                                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                         } else {
                             FragmentSphere(
-                                fragments: displayedFragments,
+                                fragments: viewModel.displayedFragments,
                                 onSelectFragment: { fragment in
                                     withAnimation(.spring(response: 0.38, dampingFraction: 0.76)) {
                                         selectedFragment = fragment
@@ -73,7 +57,7 @@ public struct FragmentsView: View {
                         }
                         
                         // Newly Captured Fragment Entrance Animation Overlay
-                        if let entering = enteringFragment {
+                        if let entering = viewModel.enteringFragment {
                             enteringFragmentOverlay(fragment: entering)
                         }
                     }
@@ -81,7 +65,7 @@ public struct FragmentsView: View {
                 }
                 
                 // Success Toast Notification
-                if let toast = toastMessage {
+                if let toast = viewModel.toastMessage {
                     VStack {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkles")
@@ -106,36 +90,32 @@ public struct FragmentsView: View {
             }
             .navigationTitle("Fragments")
             .toolbarTitleDisplayMode(.inlineLarge)
-            .sheet(isPresented: $showQuickCaptureSheet) {
+            .sheet(isPresented: $viewModel.showQuickCaptureSheet) {
                 QuickCaptureSheet { newFragment in
-                    triggerNewFragmentEntrance(newFragment)
+                    viewModel.triggerNewFragmentEntrance(newFragment)
                 }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
             .onAppear {
-                if fragments.isEmpty && !momentManager.standaloneFragments.isEmpty {
-                    fragments = momentManager.standaloneFragments
-                }
+                viewModel.loadInitialFragments()
             }
-            .onChange(of: momentManager.standaloneFragments) { _, newFragments in
-                if fragments != newFragments {
-                    fragments = newFragments
-                }
+            .onChange(of: viewModel.momentManager.standaloneFragments) { _, newFragments in
+                viewModel.syncFragments(newFragments)
             }
             .onChange(of: incomingNewFragment) { _, newValue in
                 if let frag = newValue {
-                    triggerNewFragmentEntrance(frag)
+                    viewModel.handleIncomingFragment(frag)
                     incomingNewFragment = nil
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DeleteFragment"))) { notif in
                 if let frag = notif.object as? Fragment {
-                    handleDelete(fragment: frag)
+                    viewModel.handleDelete(fragment: frag)
                 }
             }
-            .animation(.spring(response: 0.4, dampingFraction: 0.78), value: fragments.count)
-            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: selectedFilter)
+            .animation(.spring(response: 0.4, dampingFraction: 0.78), value: viewModel.fragments.count)
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.selectedFilter)
         }
     }
     
@@ -145,21 +125,21 @@ public struct FragmentsView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 // "All" Pill
-                filterPill(title: "All", count: fragments.count, isSelected: selectedFilter == nil) {
-                    selectedFilter = nil
+                filterPill(title: "All", count: viewModel.fragments.count, isSelected: viewModel.selectedFilter == nil) {
+                    viewModel.selectedFilter = nil
                 }
 
                 // Type Pills
                 ForEach(FragmentType.allCases) { type in
-                    let count = fragments.filter { $0.type == type }.count
+                    let count = viewModel.fragments.filter { $0.type == type }.count
                     filterPill(
                         title: type.displayName,
                         count: count,
                         icon: type.systemIcon,
                         accentColor: type.accentColor,
-                        isSelected: selectedFilter == type
+                        isSelected: viewModel.selectedFilter == type
                     ) {
-                        selectedFilter = (selectedFilter == type) ? nil : type
+                        viewModel.selectedFilter = (viewModel.selectedFilter == type) ? nil : type
                     }
                 }
             }
@@ -274,7 +254,7 @@ public struct FragmentsView: View {
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
 
-                Text("Quick captures your moments")
+                Text("Quick captures your tiny moments")
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -295,93 +275,23 @@ public struct FragmentsView: View {
                 .fill(fragment.gradientColors.first?.opacity(0.25) ?? Color.blue.opacity(0.2))
                 .frame(width: 200, height: 200)
                 .blur(radius: 40)
-                .scaleEffect(enteringStep == 0 ? 1.3 : 0.6)
-                .opacity(enteringStep < 2 ? 1.0 : 0.0)
+                .scaleEffect(viewModel.enteringStep == 0 ? 1.3 : 0.6)
+                .opacity(viewModel.enteringStep < 2 ? 1.0 : 0.0)
 
             FragmentNode(fragment: fragment, normalizedZ: 1.0)
-                .scaleEffect(enteringStep == 0 ? 1.35 : (enteringStep == 1 ? 0.95 : 1.0))
+                .scaleEffect(viewModel.enteringStep == 0 ? 1.35 : (viewModel.enteringStep == 1 ? 0.95 : 1.0))
                 .offset(
-                    x: enteringStep == 0 ? 0 : 30,
-                    y: enteringStep == 0 ? -20 : 10
+                    x: viewModel.enteringStep == 0 ? 0 : 30,
+                    y: viewModel.enteringStep == 0 ? -20 : 10
                 )
                 .shadow(
                     color: fragment.gradientColors.first?.opacity(0.5) ?? Color.blue.opacity(0.4),
-                    radius: enteringStep == 0 ? 25 : 8,
+                    radius: viewModel.enteringStep == 0 ? 25 : 8,
                     y: 10
                 )
         }
         .allowsHitTesting(false)
         .transition(.opacity)
-    }
-
-    // MARK: - Actions & Logic
-
-    private func triggerNewFragmentEntrance(_ newFragment: Fragment) {
-        var fragmentToEnter = newFragment
-        // Dynamically compute optimal scattered coordinates avoiding existing fragments on the sphere
-        let coords = Fragment.generateScatteredCoordinates(existing: fragments)
-        fragmentToEnter.phi = coords.phi
-        fragmentToEnter.theta = coords.theta
-        fragmentToEnter.radiusFactor = coords.radiusFactor
-
-        enteringFragment = fragmentToEnter
-        enteringStep = 0
-
-        // Step 1: Appears in foreground, floats gently
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.65)) {
-            enteringStep = 0
-        }
-
-        // Step 2: Moves toward the sphere
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
-            withAnimation(.easeInOut(duration: 0.55)) {
-                enteringStep = 1
-            }
-        }
-
-        // Step 3: Settles naturally into the sphere collection
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
-                fragments.insert(fragmentToEnter, at: 0)
-                momentManager.addStandaloneFragment(fragmentToEnter)
-                enteringFragment = nil
-            }
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-        }
-    }
-
-    private func handleAddToMoment(fragment: Fragment, momentName: String) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-            fragments.removeAll(where: { $0.id == fragment.id })
-            momentManager.deleteStandaloneFragment(id: fragment.id)
-        }
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-    }
-
-    private func handleDelete(fragment: Fragment) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-            fragments.removeAll(where: { $0.id == fragment.id })
-            momentManager.deleteStandaloneFragment(id: fragment.id)
-        }
-    }
-
-    private func showToast(_ message: String) {
-        toastMessage = message
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                if toastMessage == message {
-                    toastMessage = nil
-                }
-            }
-        }
-    }
-
-    private func clearAllFragments() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-            fragments.removeAll()
-            momentManager.clearAllStandaloneFragments()
-            selectedFilter = nil
-        }
     }
 }
 

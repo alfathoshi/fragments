@@ -50,10 +50,11 @@ public struct FolderCollection: Identifiable, Hashable {
 struct MomentsView: View {
     // MARK: - State
 
-    var momentManager: MomentManager = MomentManager.shared
-    @State private var isEditing: Bool = false
-    @State private var editingCollection: FolderCollection? = nil
-    @State private var selectedDetailCollection: FolderCollection? = nil
+    @State private var viewModel: MomentsViewModel
+
+    init(momentManager: MomentManager = MomentManager.shared) {
+        _viewModel = State(wrappedValue: MomentsViewModel(momentManager: momentManager))
+    }
 
     private let columns = [
         GridItem(.flexible(), spacing: 18),
@@ -63,7 +64,7 @@ struct MomentsView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if momentManager.collections.isEmpty {
+                if viewModel.momentManager.collections.isEmpty {
                     emptyStateView
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 } else {
@@ -71,9 +72,9 @@ struct MomentsView: View {
                         VStack(alignment: .leading, spacing: 20) {
                             // 2-Column Grid
                             LazyVGrid(columns: columns, spacing: 24) {
-                                ForEach(momentManager.collections) { collection in
+                                ForEach(viewModel.momentManager.collections) { collection in
                                     Button {
-                                        handleMomentSelection(collection)
+                                        viewModel.handleMomentSelection(collection)
                                     } label: {
                                         VStack(alignment: .center, spacing: 12) {
                                             // Folder in closed resting preview state
@@ -83,11 +84,11 @@ struct MomentsView: View {
                                                 size: CGSize(width: 168, height: 166),
                                                 folderColor: collection.color,
                                                 onTapFolder: {
-                                                    handleMomentSelection(collection)
+                                                    viewModel.handleMomentSelection(collection)
                                                 }
                                             )
                                             .overlay(alignment: .topTrailing) {
-                                                if isEditing {
+                                                if viewModel.isEditing {
                                                     Circle()
                                                         .fill(.ultraThinMaterial)
                                                         .frame(width: 30, height: 30)
@@ -137,59 +138,48 @@ struct MomentsView: View {
             .navigationTitle("Moments")
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
-                if !momentManager.collections.isEmpty {
+                if !viewModel.momentManager.collections.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                isEditing.toggle()
-                            }
+                            viewModel.toggleEditing()
                         } label: {
-                            Text(isEditing ? "Done" : "Edit")
-                                .font(.system(size: 16, weight: isEditing ? .bold : .medium))
+                            Text(viewModel.isEditing ? "Done" : "Edit")
+                                .font(.system(size: 16, weight: viewModel.isEditing ? .bold : .medium))
                         }
                     }
                 }
             }
-            .blur(radius: editingCollection != nil ? 16 : 0)
-            .animation(.easeInOut(duration: 0.28), value: editingCollection != nil)
-            .animation(.spring(response: 0.4, dampingFraction: 0.78), value: momentManager.collections.count)
-            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditing)
+            .blur(radius: viewModel.editingCollection != nil ? 16 : 0)
+            .animation(.easeInOut(duration: 0.28), value: viewModel.editingCollection != nil)
+            .animation(.spring(response: 0.4, dampingFraction: 0.78), value: viewModel.momentManager.collections.count)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: viewModel.isEditing)
             // Bottom Sheet opened when Edit mode is active and moment is picked
-            .sheet(item: $editingCollection) { collection in
+            .sheet(item: $viewModel.editingCollection) { collection in
                 FolderDetailBottomSheet(
                     collection: collection,
                     onUpdateColor: { newColor in
-                        momentManager.updateMomentColor(id: collection.id, color: newColor)
+                        viewModel.momentManager.updateMomentColor(id: collection.id, color: newColor)
                     },
                     onDelete: {
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
-                            momentManager.deleteMoment(id: collection.id)
+                            viewModel.momentManager.deleteMoment(id: collection.id)
                         }
                     }
                 )
             }
             // Navigation destination pushed on moment tap (Normal mode)
-            .navigationDestination(item: $selectedDetailCollection) { collection in
-                let currentCollection = momentManager.collections.first(where: { $0.id == collection.id }) ?? collection
+            .navigationDestination(item: $viewModel.selectedDetailCollection) { collection in
+                let currentCollection = viewModel.momentManager.collections.first(where: { $0.id == collection.id }) ?? collection
                 MomentDetailView(
                     collection: currentCollection,
                     onUpdateCollection: { updated in
-                        momentManager.updateMomentItems(id: updated.id, items: updated.items)
-                        if let idx = momentManager.collections.firstIndex(where: { $0.id == updated.id }) {
-                            momentManager.collections[idx] = updated
+                        viewModel.momentManager.updateMomentItems(id: updated.id, items: updated.items)
+                        if let idx = viewModel.momentManager.collections.firstIndex(where: { $0.id == updated.id }) {
+                            viewModel.momentManager.collections[idx] = updated
                         }
                     }
                 )
             }
-        }
-    }
-
-    private func handleMomentSelection(_ collection: FolderCollection) {
-        if isEditing {
-            editingCollection = collection
-        } else {
-            selectedDetailCollection = collection
         }
     }
 
@@ -223,7 +213,7 @@ struct MomentsView: View {
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
 
-                Text("Start a moment by capturing fragments")
+                Text("Start your moment")
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

@@ -16,33 +16,12 @@ enum AppTab: Hashable {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var momentManager = MomentManager.shared
-
-    @State private var selectedTab: AppTab = .fragments
-    @State private var activeTab: AppTab = .fragments // The actual tab displayed underneath blur
-    @State private var incomingNewFragment: Fragment? = nil
-
-    // Floating Capture Menu & Modals
-    @State private var isCaptureMenuOpen: Bool = false
-    @State private var showActiveMomentView: Bool = false
-    @State private var showQuickCaptureSheet: Bool = false
-    @State private var showDiscardConfirmation: Bool = false
-    @State private var showResumeOrNewMomentAlert: Bool = false
-    @State private var showDiscardForQuickCaptureAlert: Bool = false
-    @State private var selectedFragment: Fragment? = nil
-    @State private var quickCaptureInitialType: FragmentType = .photo
-    @State private var pendingQuickCaptureType: FragmentType = .photo
-    @State private var activeMomentInitialCaptureType: FragmentType? = nil
-    @State private var activeMomentAutoOpenEnd: Bool = false
-
-    private var currentTab: AppTab {
-        selectedTab == .capture ? activeTab : selectedTab
-    }
+    @State private var viewModel = ContentViewModel()
 
     var body: some View {
         ZStack(alignment: .bottom) {
             // Native TabView (Blurred when Capture Menu or Fragment Detail is Open)
-            TabView(selection: $selectedTab) {
+            TabView(selection: $viewModel.selectedTab) {
                 if #available(iOS 27.0, *) {
                     Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .prominent) {
                         Color.clear
@@ -55,39 +34,39 @@ struct ContentView: View {
 
                 Tab(value: AppTab.fragments) {
                     FragmentsView(
-                        incomingNewFragment: $incomingNewFragment,
-                        selectedFragment: $selectedFragment
+                        incomingNewFragment: $viewModel.incomingNewFragment,
+                        selectedFragment: $viewModel.selectedFragment
                     )
                 } label: {
                     Label {
                         Text("Fragments")
                     } icon: {
-                        Image(systemName: currentTab == .fragments ? "circle.hexagongrid.fill" : "circle.hexagongrid")
+                        Image(systemName: viewModel.currentTab == .fragments ? "circle.hexagongrid.fill" : "circle.hexagongrid")
                             .environment(\.symbolVariants, .none)
                     }
                     .environment(\.symbolVariants, .none)
-                    .id("tab_fragments_\(currentTab == .fragments)")
+                    .id("tab_fragments_\(viewModel.currentTab == .fragments)")
                 }
 
                 Tab(value: AppTab.logs) {
-                    MomentsView(momentManager: momentManager)
+                    MomentsView(momentManager: viewModel.momentManager)
                 } label: {
                     Label {
                         Text("Moments")
                     } icon: {
-                        Image(systemName: currentTab == .logs ? "rectangle.stack.fill" : "rectangle.stack")
+                        Image(systemName: viewModel.currentTab == .logs ? "rectangle.stack.fill" : "rectangle.stack")
                             .environment(\.symbolVariants, .none)
                     }
                     .environment(\.symbolVariants, .none)
-                    .id("tab_moments_\(currentTab == .logs)")
+                    .id("tab_moments_\(viewModel.currentTab == .logs)")
                 }
             }
             .tint(.primary)
-            .blur(radius: (isCaptureMenuOpen || selectedFragment != nil) ? 1 : 0)
-            .animation(.easeInOut(duration: 0.28), value: isCaptureMenuOpen || selectedFragment != nil)
+            .blur(radius: (viewModel.isCaptureMenuOpen || viewModel.selectedFragment != nil) ? 1 : 0)
+            .animation(.easeInOut(duration: 0.28), value: viewModel.isCaptureMenuOpen || viewModel.selectedFragment != nil)
 
             // Floating Active Session Orb Widget (When moment is active and ActiveMomentView is minimized - at bottom above tab bar)
-            if momentManager.isSessionActive && !showActiveMomentView && selectedTab != .capture && selectedFragment == nil {
+            if viewModel.momentManager.isSessionActive && !viewModel.showActiveMomentView && viewModel.selectedTab != .capture && viewModel.selectedFragment == nil {
                 activeSessionFloatingIsland
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .padding(.bottom, 64)
@@ -95,24 +74,24 @@ struct ContentView: View {
             }
 
             // Floating 3D Orbs Capture Overlay
-            if isCaptureMenuOpen {
+            if viewModel.isCaptureMenuOpen {
                 FloatingCaptureOverlay(
-                    isOpen: $isCaptureMenuOpen,
+                    isOpen: $viewModel.isCaptureMenuOpen,
                     onSelectStartMoment: {
-                        if momentManager.isSessionActive {
-                            showResumeOrNewMomentAlert = true
+                        if viewModel.momentManager.isSessionActive {
+                            viewModel.showResumeOrNewMomentAlert = true
                         } else {
-                            momentManager.startSession()
-                            showActiveMomentView = true
+                            viewModel.momentManager.startSession()
+                            viewModel.showActiveMomentView = true
                         }
                     },
                     onSelectQuickCaptureType: { type in
-                        if momentManager.isSessionActive {
-                            pendingQuickCaptureType = type
-                            showDiscardForQuickCaptureAlert = true
+                        if viewModel.momentManager.isSessionActive {
+                            viewModel.pendingQuickCaptureType = type
+                            viewModel.showDiscardForQuickCaptureAlert = true
                         } else {
-                            quickCaptureInitialType = type
-                            showQuickCaptureSheet = true
+                            viewModel.quickCaptureInitialType = type
+                            viewModel.showQuickCaptureSheet = true
                         }
                     }
                 )
@@ -121,18 +100,18 @@ struct ContentView: View {
             }
 
             // Fragment Detail Focused Preview Modal (Overlays TabBar, Navigation bar, and entire window)
-            if let fragment = selectedFragment {
+            if let fragment = viewModel.selectedFragment {
                 FragmentDetailView(
                     fragment: fragment,
                     onDelete: { frag in
                         NotificationCenter.default.post(name: NSNotification.Name("DeleteFragment"), object: frag)
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
-                            selectedFragment = nil
+                            viewModel.selectedFragment = nil
                         }
                     },
                     onDismiss: {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
-                            selectedFragment = nil
+                            viewModel.selectedFragment = nil
                         }
                     }
                 )
@@ -140,90 +119,76 @@ struct ContentView: View {
                 .zIndex(100)
             }
         }
-        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: momentManager.activeSession != nil)
-        .onChange(of: selectedTab) { oldTab, newTab in
+        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: viewModel.momentManager.activeSession != nil)
+        .onChange(of: viewModel.selectedTab) { oldTab, newTab in
             if newTab == .capture {
-                // Intercept capture tab tap: pop up the floating orbs and blur the screen!
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.74)) {
-                    isCaptureMenuOpen = true
-                }
-                // Keep the underlying view on the previous tab so it blurs gorgeously
-                selectedTab = (oldTab == .capture) ? .fragments : oldTab
+                viewModel.handleCaptureTabTap(oldTab: oldTab)
             } else {
-                activeTab = newTab
+                viewModel.activeTab = newTab
             }
         }
         // Active Moment View (Full Spatial Screen with Bottom Floating ThinkingOrb)
-        .fullScreenCover(isPresented: $showActiveMomentView) {
+        .fullScreenCover(isPresented: $viewModel.showActiveMomentView) {
             ActiveMomentView(
-                momentManager: momentManager,
-                initialCaptureType: activeMomentInitialCaptureType,
-                autoOpenEnd: activeMomentAutoOpenEnd,
+                momentManager: viewModel.momentManager,
+                initialCaptureType: viewModel.activeMomentInitialCaptureType,
+                autoOpenEnd: viewModel.activeMomentAutoOpenEnd,
                 onDismiss: {
-                    showActiveMomentView = false
-                    activeMomentInitialCaptureType = nil
-                    activeMomentAutoOpenEnd = false
+                    viewModel.onActiveMomentDismiss()
                 },
                 onSaveComplete: {
-                    showActiveMomentView = false
-                    activeMomentInitialCaptureType = nil
-                    activeMomentAutoOpenEnd = false
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                        selectedTab = .logs
-                        activeTab = .logs
-                    }
+                    viewModel.onSaveComplete()
                 }
             )
         }
         // Quick Capture Sheet (For standalone quick captures outside active moment)
-        .fullScreenCover(isPresented: $showQuickCaptureSheet) {
+        .fullScreenCover(isPresented: $viewModel.showQuickCaptureSheet) {
             CaptureView(
                 initialMode: {
-                    switch quickCaptureInitialType {
+                    switch viewModel.quickCaptureInitialType {
                     case .photo: return .photo
                     case .video: return .video
                     case .note: return .note
                     case .audio: return .memo
                     }
                 }(),
-                activeSession: momentManager.activeSession,
+                activeSession: viewModel.momentManager.activeSession,
                 onCaptureFragment: { newFragment in
-                    handleFragmentCaptured(newFragment)
-                    showQuickCaptureSheet = false
+                    viewModel.handleFragmentCaptured(newFragment)
+                    viewModel.showQuickCaptureSheet = false
                 },
                 onClose: {
-                    showQuickCaptureSheet = false
+                    viewModel.showQuickCaptureSheet = false
                 },
                 onEndActiveMoment: {
-                    showQuickCaptureSheet = false
+                    viewModel.showQuickCaptureSheet = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        momentManager.requestEndSession()
+                        viewModel.momentManager.requestEndSession()
                     }
                 }
             )
         }
         // End Moment Sheet fallback
-        .sheet(isPresented: $momentManager.showEndMomentSheet) {
-            if let session = momentManager.activeSession {
+        .sheet(isPresented: $viewModel.momentManager.showEndMomentSheet) {
+            if let session = viewModel.momentManager.activeSession {
                 EndMomentSheet(
                     session: session,
                     onSave: { name, category, color, location in
-                        momentManager.finishSession(
+                        viewModel.momentManager.finishSession(
                             name: name,
                             category: category,
                             color: color,
                             location: location
                         )
-                        showActiveMomentView = false
+                        viewModel.showActiveMomentView = false
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                            selectedTab = .logs
-                            activeTab = .logs
+                            viewModel.selectedTab = .logs
+                            viewModel.activeTab = .logs
                         }
                     },
                     onCancel: {
-                        momentManager.cancelSession()
-                        showActiveMomentView = false
+                        viewModel.momentManager.cancelSession()
+                        viewModel.showActiveMomentView = false
                     }
                 )
                 .presentationDetents([.large])
@@ -233,11 +198,11 @@ struct ContentView: View {
         }
         .alert(
             "Discard Moment?",
-            isPresented: $showDiscardConfirmation
+            isPresented: $viewModel.showDiscardConfirmation
         ) {
             Button("Cancel", role: .cancel) { }
             Button("Discard", role: .destructive) {
-                momentManager.cancelSession()
+                viewModel.discardMoment()
             }
         } message: {
             Text("Are you sure you want to discard this moment? Any captured fragments will not be saved.")
@@ -245,15 +210,13 @@ struct ContentView: View {
         // Confirmation when starting a moment while one is already active
         .alert(
             "Moment in Progress",
-            isPresented: $showResumeOrNewMomentAlert
+            isPresented: $viewModel.showResumeOrNewMomentAlert
         ) {
             Button("Resume Moment") {
-                showActiveMomentView = true
+                viewModel.resumeMoment()
             }
             Button("Start New Moment", role: .destructive) {
-                momentManager.cancelSession()
-                momentManager.startSession()
-                showActiveMomentView = true
+                viewModel.startNewMoment()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
@@ -262,90 +225,30 @@ struct ContentView: View {
         // Confirmation when starting quick capture while moment is active
         .alert(
             "Discard Active Moment?",
-            isPresented: $showDiscardForQuickCaptureAlert
+            isPresented: $viewModel.showDiscardForQuickCaptureAlert
         ) {
             Button("Cancel", role: .cancel) { }
             Button("Discard", role: .destructive) {
-                momentManager.cancelSession()
-                quickCaptureInitialType = pendingQuickCaptureType
-                showQuickCaptureSheet = true
+                viewModel.discardForQuickCapture()
             }
         } message: {
             Text("Starting a quick capture will discard your currently active moment. Any captured fragments will not be saved.")
         }
         .onAppear {
-            momentManager.setModelContext(modelContext)
+            viewModel.setModelContext(modelContext)
         }
         .onOpenURL { url in
-            handleDeepLink(url)
-        }
-    }
-
-    private func handleDeepLink(_ url: URL) {
-        guard url.scheme == "fragments" else { return }
-
-        // Close any standalone detail views or menus that might block presentation
-        selectedFragment = nil
-        isCaptureMenuOpen = false
-
-        if url.host == "end" {
-            // Dismiss any existing active moment cover first so we can cleanly open end sheet
-            showActiveMomentView = false
-            activeMomentInitialCaptureType = nil
-            activeMomentAutoOpenEnd = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showActiveMomentView = true
-            }
-        } else if url.host == "capture" {
-            let modeParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                .queryItems?
-                .first(where: { $0.name == "mode" })?
-                .value ?? "photo"
-
-            let targetType: FragmentType
-            switch modeParam {
-            case "video": targetType = .video
-            case "note":  targetType = .note
-            case "audio", "memo": targetType = .audio
-            default:      targetType = .photo
-            }
-
-            showActiveMomentView = false
-            activeMomentAutoOpenEnd = false
-            activeMomentInitialCaptureType = targetType
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showActiveMomentView = true
-            }
-        } else if url.host == "moment" {
-            activeMomentInitialCaptureType = nil
-            activeMomentAutoOpenEnd = false
-            showActiveMomentView = true
-        } else if url.host == "tab" || url.host == "moments" {
-            let tabParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                .queryItems?
-                .first(where: { $0.name == "name" })?
-                .value ?? (url.host == "moments" ? "moments" : "")
-            if tabParam == "moments" || tabParam == "logs" || url.host == "moments" {
-                withAnimation {
-                    selectedTab = .logs
-                    activeTab = .logs
-                }
-            } else if tabParam == "fragments" {
-                withAnimation {
-                    selectedTab = .fragments
-                    activeTab = .fragments
-                }
-            }
+            viewModel.handleDeepLink(url)
         }
     }
 
     // MARK: - Active Session Floating Island Banner (Tapping brings back ActiveMomentView)
     private var activeSessionFloatingIsland: some View {
         Group {
-            if let session = momentManager.activeSession {
+            if let session = viewModel.momentManager.activeSession {
                 Button {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    showActiveMomentView = true
+                    viewModel.showActiveMomentView = true
                 } label: {
                     HStack(spacing: 14) {
                         // ThinkingOrb working state
@@ -374,7 +277,7 @@ struct ContentView: View {
                         // Discard active moment button
                         Button(role: .destructive) {
                             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                            showDiscardConfirmation = true
+                            viewModel.showDiscardConfirmation = true
                         } label: {
                             Image(systemName: "trash")
                                 .font(.system(size: 16, weight: .bold))
@@ -390,20 +293,6 @@ struct ContentView: View {
                 }
                 .buttonStyle(.glass)
                 .padding(.horizontal, 20)
-            }
-        }
-    }
-
-    private func handleFragmentCaptured(_ newFragment: Fragment) {
-        if momentManager.isSessionActive {
-            // ONLY add to active moment session (do not store in standalone FragmentsView)
-            momentManager.addFragment(newFragment)
-        } else {
-            // Standalone quick capture outside any moment session
-            incomingNewFragment = newFragment
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                selectedTab = .fragments
-                activeTab = .fragments
             }
         }
     }

@@ -156,11 +156,20 @@ public struct CustomCamera: View {
 
     private var topControlsBar: some View {
         HStack(spacing: 0) {
-            // Left: Camera Flip Button (62 pt, rotating SF Symbol arrow.triangle.2.circlepath)
-            CameraFlipButton(isFrontCamera: $isFrontCamera) {
-                cameraService.flipCamera()
-                onFlipCamera?(isFrontCamera)
+            
+            TactileCircularButton(
+                systemImage: isFlashOn ? "bolt.fill" : "bolt.slash.fill",
+                iconColor: isFlashOn ? Color.yellow : (colorScheme == .dark ? .white : .black),
+                keycapColor: isFlashOn ? (colorScheme == .dark ? Color(red: 0.32, green: 0.30, blue: 0.14) : Color(red: 0.98, green: 0.97, blue: 0.90)) : nil,
+                size: 62,
+                iconSize: 22,
+                iconWeight: .bold,
+                isActive: isFlashOn
+            ) {
+                toggleFlash()
             }
+            .accessibilityLabel(isFlashOn ? "Flash On" : "Flash Off")
+            
 
             Spacer(minLength: 0)
 
@@ -275,15 +284,6 @@ public struct CustomCamera: View {
                             .background(Color.black.opacity(0.30), in: Capsule())
 
                         Spacer()
-
-                        if captureCount > 0 {
-                            Text("\(captureCount) Captured")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.black.opacity(0.30), in: Capsule())
-                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 14)
@@ -357,31 +357,24 @@ public struct CustomCamera: View {
 
             // Center: Large Capture (+) Button (74 pt, tactile circular push button)
             TactileCircularButton(
-                systemImage: countdownRemaining != nil ? "xmark" : "plus",
+                systemImage: countdownRemaining != nil ? "xmark" : "camera",
                 iconColor: countdownRemaining != nil ? .red : (colorScheme == .dark ? .white : .black),
                 size: 74,
                 iconSize: 26,
-                iconWeight: .bold
+                iconWeight: .semibold
             ) {
                 handleCaptureButtonTap()
             }
             .accessibilityLabel(countdownRemaining != nil ? "Cancel Timer" : "Take Photo")
 
             Spacer(minLength: 0)
-
-            // Right: Flash Button (62 pt, illuminated yellow active state)
-            TactileCircularButton(
-                systemImage: isFlashOn ? "bolt.fill" : "bolt.slash.fill",
-                iconColor: isFlashOn ? Color.yellow : (colorScheme == .dark ? .white : .black),
-                keycapColor: isFlashOn ? (colorScheme == .dark ? Color(red: 0.32, green: 0.30, blue: 0.14) : Color(red: 0.98, green: 0.97, blue: 0.90)) : nil,
-                size: 62,
-                iconSize: 22,
-                iconWeight: .bold,
-                isActive: isFlashOn
-            ) {
-                toggleFlash()
+            
+            CameraFlipButton(isFrontCamera: $isFrontCamera) {
+                cameraService.flipCamera()
+                onFlipCamera?(isFrontCamera)
             }
-            .accessibilityLabel(isFlashOn ? "Flash On" : "Flash Off")
+
+           
         }
         .padding(.horizontal, 24)
     }

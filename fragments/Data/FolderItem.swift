@@ -21,7 +21,7 @@ public struct FolderItem: Identifiable, Hashable {
     public var audioWaveform: [CGFloat]?
     public var type: FragmentType?
     public var createdAt: Date?
-
+    
     public init(
         id: UUID = UUID(),
         title: String = "",
@@ -49,7 +49,7 @@ public struct FolderItem: Identifiable, Hashable {
         self.type = type
         self.createdAt = createdAt
     }
-
+    
     public init(from fragment: Fragment) {
         let tag: String
         let systemIcon: String
@@ -67,7 +67,7 @@ public struct FolderItem: Identifiable, Hashable {
             tag = "MEMO"
             systemIcon = "waveform"
         }
-
+        
         self.init(
             id: fragment.id,
             title: fragment.title.isEmpty ? "\(fragment.type.displayName) Fragment" : fragment.title,
@@ -83,7 +83,7 @@ public struct FolderItem: Identifiable, Hashable {
             createdAt: fragment.createdAt
         )
     }
-
+    
     public func toFragment() -> Fragment {
         let resolvedType: FragmentType = {
             if let t = type { return t }
@@ -104,7 +104,7 @@ public struct FolderItem: Identifiable, Hashable {
             }
             return .photo
         }()
-
+        
         return Fragment(
             id: id,
             type: resolvedType,
@@ -119,7 +119,7 @@ public struct FolderItem: Identifiable, Hashable {
             audioWaveform: audioWaveform ?? []
         )
     }
-
+    
     /// Resolves local or bundle video URL for playback
     public var videoURL: URL? {
         if let directURL = toFragment().mediaURL {
@@ -135,7 +135,7 @@ public struct FolderItem: Identifiable, Hashable {
         }
         return nil
     }
-
+    
     public var resolvedGradientColors: [Color] {
         if !gradientColors.isEmpty {
             return gradientColors
@@ -153,134 +153,5 @@ public struct FolderItem: Identifiable, Hashable {
             return [Color.blue.opacity(0.8), Color.purple.opacity(0.8)]
         }
     }
-
-#if DEBUG
-    /// Sample items for previews and testing
-    public static var samplePhotos: [FolderItem] {
-        [
-            FolderItem(
-                title: "Sunset Glow",
-                subtitle: "Golden hour capture",
-                systemImage: "sun.max.fill",
-                gradientColors: [Color(red: 1.0, green: 0.55, blue: 0.45), Color(red: 0.95, green: 0.25, blue: 0.50)],
-                tag: "PHOTO"
-            ),
-            FolderItem(
-                title: "Emerald Woods",
-                subtitle: "Morning trail run",
-                systemImage: "leaf.fill",
-                gradientColors: [Color(red: 0.22, green: 0.75, blue: 0.55), Color(red: 0.12, green: 0.45, blue: 0.38)],
-                tag: "NATURE"
-            ),
-            FolderItem(
-                title: "Ocean Whisper",
-                subtitle: "Canggu beachfront",
-                systemImage: "water.waves",
-                gradientColors: [Color(red: 0.25, green: 0.65, blue: 0.95), Color(red: 0.20, green: 0.35, blue: 0.75)],
-                tag: "TRAVEL"
-            )
-        ]
-    }
-
-    public static var sampleDocuments: [FolderItem] {
-        [
-            FolderItem(
-                title: "Project Pitch",
-                subtitle: "Keynote 2026",
-                systemImage: "doc.richtext.fill",
-                gradientColors: [Color(red: 0.98, green: 0.70, blue: 0.25), Color(red: 0.92, green: 0.45, blue: 0.20)],
-                tag: "DECK"
-            ),
-            FolderItem(
-                title: "Design System",
-                subtitle: "Figma tokens v2.4",
-                systemImage: "paintpalette.fill",
-                gradientColors: [Color(red: 0.65, green: 0.45, blue: 0.95), Color(red: 0.40, green: 0.25, blue: 0.85)],
-                tag: "FIGMA"
-            ),
-            FolderItem(
-                title: "Architecture Spec",
-                subtitle: "Core Engine v1",
-                systemImage: "cpu.fill",
-                gradientColors: [Color(red: 0.30, green: 0.80, blue: 0.85), Color(red: 0.15, green: 0.45, blue: 0.65)],
-                tag: "CODE"
-            )
-        ]
-    }
-
-    /// Sample Sanur Beach items matching Figma Node 209:2619
-    public static var sampleSanurBeach: [FolderItem] {
-        let calendar = Calendar.current
-        let today = Date()
-        let twoThirtyToday = calendar.date(bySettingHour: 14, minute: 30, second: 0, of: today) ?? today
-        let nextDay = calendar.date(byAdding: .day, value: 1, to: today) ?? today
-        let tenFifteenNextDay = calendar.date(bySettingHour: 10, minute: 15, second: 0, of: nextDay) ?? nextDay
-
-        return [
-            FolderItem(
-                title: "Volleyball",
-                subtitle: "2.30 PM",
-                systemImage: "photo.fill",
-                imageName: "volleyball",
-                gradientColors: [Color(red: 0.40, green: 0.40, blue: 0.85), Color(red: 0.70, green: 0.35, blue: 0.80)],
-                tag: "PHOTO",
-                type: .photo,
-                createdAt: twoThirtyToday
-            ),
-            FolderItem(
-                title: "Beauty",
-                subtitle: "2.30 PM",
-                systemImage: "text.quote",
-                gradientColors: [Color(red: 1.0, green: 0.859, blue: 0.576), Color(red: 0.98, green: 0.76, blue: 0.45)],
-                tag: "NOTE",
-                text: "She’s really beautiful here. Her eyes, her hair, her voice, all about her is beauty.",
-                type: .note,
-                createdAt: twoThirtyToday
-            ),
-            FolderItem(
-                title: "Wave and Laugh",
-                subtitle: "2.30 PM",
-                systemImage: "waveform",
-                gradientColors: [Color(red: 0.0, green: 0.533, blue: 1.0), Color(red: 0.10, green: 0.40, blue: 0.90)],
-                tag: "MEMO",
-                duration: "0:14",
-                audioWaveform: [0.2, 0.5, 0.85, 0.3, 0.3, 1.0, 0.85, 0.85, 0.85, 0.6, 0.6, 0.6, 1.0, 0.2, 1.0, 1.0, 1.0, 0.6, 0.6, 0.6, 0.6, 1.0, 0.6, 0.6, 0.3, 0.6, 0.3, 0.6, 1.0, 0.6, 1.0, 0.2, 1.0, 0.85, 0.6, 0.6, 0.3, 0.6, 0.6, 0.3, 0.2, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 1.0, 0.6, 0.3, 0.2],
-                type: .audio,
-                createdAt: twoThirtyToday
-            ),
-            FolderItem(
-                title: "Hana’s Joke",
-                subtitle: "2.30 PM",
-                systemImage: "waveform",
-                gradientColors: [Color(red: 0.75, green: 0.55, blue: 0.98), Color(red: 0.60, green: 0.40, blue: 0.90)],
-                tag: "MEMO",
-                duration: "0:21",
-                audioWaveform: [0.2, 0.5, 0.85, 0.3, 0.3, 1.0, 0.85, 0.85, 0.85, 0.6, 0.6, 0.6, 1.0, 0.2, 1.0, 1.0, 1.0, 0.6, 0.6, 0.6, 0.6, 1.0, 0.6, 0.6, 0.3, 0.6, 0.3, 0.6, 1.0, 0.6, 1.0, 0.2, 1.0, 0.85, 0.6, 0.6, 0.3, 0.6, 0.6, 0.3, 0.2, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 1.0, 0.6, 0.3, 0.2],
-                type: .audio,
-                createdAt: twoThirtyToday
-            ),
-            FolderItem(
-                title: "Cheers",
-                subtitle: "2.30 PM",
-                systemImage: "photo.fill",
-                imageName: "cheers",
-                gradientColors: [Color(red: 0.35, green: 0.45, blue: 0.85), Color(red: 0.65, green: 0.30, blue: 0.80)],
-                tag: "PHOTO",
-                type: .photo,
-                createdAt: twoThirtyToday
-            ),
-            FolderItem(
-                title: "Waves Shore",
-                subtitle: "10.15 AM",
-                systemImage: "video.fill",
-                gradientColors: [Color(red: 0.35, green: 0.65, blue: 1.0), Color(red: 0.20, green: 0.45, blue: 0.95)],
-                tag: "VIDEO",
-                duration: "0:15",
-                type: .video,
-                createdAt: tenFifteenNextDay
-            )
-        ]
-    }
-#endif
 }
 
