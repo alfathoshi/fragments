@@ -10,6 +10,8 @@ import SwiftData
 
 @main
 struct fragmentsApp: App {
+    @State private var isSplashScreenDone: Bool = false
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             SDFragment.self,
@@ -37,7 +39,19 @@ struct fragmentsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ZStack {
+                if isSplashScreenDone {
+                    ContentView()
+                        .transition(.opacity)
+                } else {
+                    SplashScreenView {
+                        withAnimation(.easeInOut(duration: 0.45)) {
+                            isSplashScreenDone = true
+                        }
+                    }
+                    .transition(.opacity)
+                }
+            }
         }
         .modelContainer(sharedModelContainer)
     }

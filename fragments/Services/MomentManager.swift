@@ -124,9 +124,10 @@ final class MomentManager {
     }
 
     /// Starts a new Moment recording session
-    func startSession(location: String = "Jakarta, ID") {
+    func startSession(location: String? = nil) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        activeSession = MomentSession(startDate: Date(), fragments: [], location: location)
+        let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
+        activeSession = MomentSession(startDate: Date(), fragments: [], location: resolvedLocation)
     }
 
     /// Adds a newly captured fragment to the active session

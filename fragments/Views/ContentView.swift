@@ -43,29 +43,11 @@ struct ContentView: View {
             TabView(selection: $selectedTab) {
                 if #available(iOS 27.0, *) {
                     Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .prominent) {
-                        CaptureView(
-                            isActive: selectedTab == .capture,
-                            activeSession: momentManager.activeSession,
-                            onCaptureFragment: { newFragment in
-                                handleFragmentCaptured(newFragment)
-                            },
-                            onEndActiveMoment: {
-                                momentManager.requestEndSession()
-                            }
-                        )
+                        Color.clear
                     }
                 } else {
                     Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .search) {
-                        CaptureView(
-                            isActive: selectedTab == .capture,
-                            activeSession: momentManager.activeSession,
-                            onCaptureFragment: { newFragment in
-                                handleFragmentCaptured(newFragment)
-                            },
-                            onEndActiveMoment: {
-                                momentManager.requestEndSession()
-                            }
-                        )
+                        Color.clear
                     }
                 }
 

@@ -57,8 +57,8 @@ public struct FragmentNode: View {
     // MARK: - 1. Photo Node
     private var photoNode: some View {
         ZStack(alignment: .bottomLeading) {
-            // Visual Photo Representation (Real image from Resources or gradient placeholder)
-            if let image = fragment.loadedImage {
+            // Fast downsampled cached thumbnail representation
+            if let image = fragment.thumbnailImage ?? fragment.loadedImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -232,15 +232,13 @@ public struct FragmentNode: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white.opacity(0.9))
 
-                    Text(fragment.duration ?? "0:08")
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.8))
-
                     Spacer()
 
-                    Circle()
-                        .fill(Color.white.opacity(0.8))
-                        .frame(width: 4, height: 4)
+                    Text("VOICE")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    
                 }
 
                 // Waveform bars
@@ -257,12 +255,7 @@ public struct FragmentNode: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
 
-                if normalizedZ > 0.45 {
-                    Text(fragment.title)
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                }
+                
             }
             .padding(10)
         }

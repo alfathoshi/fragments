@@ -461,6 +461,7 @@ public final class CameraPreviewUIView: UIView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
+        guard bounds.width > 0 && bounds.height > 0 else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         videoPreviewLayer.frame = bounds

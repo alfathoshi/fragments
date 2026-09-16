@@ -7,9 +7,51 @@
 
 import SwiftUI
 import AVFoundation
+import ImageIO
 
-// MARK: - Thumbnail Cache
-private let videoThumbnailCache = NSCache<NSString, UIImage>()
+// MARK: - Thumbnail Cache & Image Downsampler
+private let photoThumbnailCache: NSCache<NSString, UIImage> = {
+    let cache = NSCache<NSString, UIImage>()
+    cache.countLimit = 120
+    cache.totalCostLimit = 40 * 1024 * 1024 // 40 MB max memory limit
+    return cache
+}()
+
+private let fullImageCache: NSCache<NSString, UIImage> = {
+    let cache = NSCache<NSString, UIImage>()
+    cache.countLimit = 20
+    cache.totalCostLimit = 60 * 1024 * 1024 // 60 MB max memory limit
+    return cache
+}()
+
+private let videoThumbnailCache: NSCache<NSString, UIImage> = {
+    let cache = NSCache<NSString, UIImage>()
+    cache.countLimit = 50
+    return cache
+}()
+
+/// Memory-efficient image downsampler using CoreGraphics ImageIO.
+/// Bypasses full-resolution bitmap decompression in RAM.
+public func downsampleImage(at url: URL, to pointSize: CGSize, scale: CGFloat = 2.0) -> UIImage? {
+    let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+    guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, imageSourceOptions) else {
+        return nil
+    }
+
+    let maxDimensionInPixels = max(pointSize.width, pointSize.height) * scale
+    let downsampleOptions: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxDimensionInPixels
+    ]
+
+    guard let downsampledImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, downsampleOptions as CFDictionary) else {
+        return nil
+    }
+
+    return UIImage(cgImage: downsampledImage)
+}
 
 // MARK: - Fragment Type
 
@@ -203,9 +245,42 @@ public struct Fragment: Identifiable, Hashable {
         return nil
     }
 
+    /// Downsampled thumbnail for fast 60 FPS sphere rendering (allocates < 0.2 MB RAM per image)
+    public var thumbnailImage: UIImage? {
+        guard type == .photo, let url = mediaURL else { return nil }
+        let key = url.lastPathComponent as NSString
+        if let cached = photoThumbnailCache.object(forKey: key) {
+            return cached
+        }
+        // Downsample to card bounds (around 120 x 140 pt * 2.0 scale = 240 x 280 pixels)
+        if let thumb = downsampleImage(at: url, to: CGSize(width: 120, height: 140), scale: 2.0) {
+            photoThumbnailCache.setObject(thumb, forKey: key)
+            return thumb
+        }
+        if let fallback = UIImage(contentsOfFile: url.path) {
+            photoThumbnailCache.setObject(fallback, forKey: key)
+            return fallback
+        }
+        return nil
+    }
+
+    /// Screen-fitted image for FragmentDetailView modal inspection
     public var loadedImage: UIImage? {
         guard type == .photo, let url = mediaURL else { return nil }
-        return UIImage(contentsOfFile: url.path)
+        let key = url.lastPathComponent as NSString
+        if let cached = fullImageCache.object(forKey: key) {
+            return cached
+        }
+        // Downsample to max modal preview dimensions (e.g. 360 x 420 pt * 2.5 scale)
+        if let fitted = downsampleImage(at: url, to: CGSize(width: 360, height: 420), scale: 2.5) {
+            fullImageCache.setObject(fitted, forKey: key)
+            return fitted
+        }
+        if let fallback = UIImage(contentsOfFile: url.path) {
+            fullImageCache.setObject(fallback, forKey: key)
+            return fallback
+        }
+        return nil
     }
 
     public var videoThumbnail: UIImage? {
@@ -217,6 +292,7 @@ public struct Fragment: Identifiable, Hashable {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 300, height: 360)
         let time = CMTime(seconds: 0.5, preferredTimescale: 60)
         if let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) {
             let img = UIImage(cgImage: cgImage)

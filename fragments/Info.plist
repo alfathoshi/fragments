@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Fragments requires camera access to capture photos and videos for your moments.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fragments requires microphone access to record audio for videos and voice memos.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Fragments uses your location to automatically tag captured fragments and moments with your current location.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

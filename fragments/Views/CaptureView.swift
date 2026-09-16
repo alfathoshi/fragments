@@ -297,13 +297,14 @@ public struct CaptureView: View {
         let mediaPath = fileURL?.path
         let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
         let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
+        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
         let fragment = Fragment(
             type: .photo,
             title: momentTitle != nil ? "\(momentTitle!) Photo" : "Photo Fragment",
             subtitle: Date().formatted(date: .abbreviated, time: .shortened),
             mediaResourceName: mediaPath,
             gradientColors: [Color(red: 1.0, green: 0.55, blue: 0.35), Color(red: 0.95, green: 0.25, blue: 0.55)],
-            location: "Jakarta, ID",
+            location: resolvedLocation,
             phi: coords.phi,
             theta: coords.theta,
             radiusFactor: coords.radiusFactor
@@ -316,13 +317,14 @@ public struct CaptureView: View {
         let mediaPath = url?.path
         let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
         let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
+        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
         let fragment = Fragment(
             type: .video,
             title: momentTitle != nil ? "\(momentTitle!) Video" : "Video Fragment",
             subtitle: Date().formatted(date: .abbreviated, time: .shortened),
             mediaResourceName: mediaPath,
             gradientColors: [Color(red: 0.35, green: 0.65, blue: 1.0), Color(red: 0.20, green: 0.45, blue: 0.95)],
-            location: "Jakarta, ID",
+            location: resolvedLocation,
             duration: formattedDuration,
             phi: coords.phi,
             theta: coords.theta,
@@ -337,6 +339,7 @@ public struct CaptureView: View {
         let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? (momentTitle != nil ? "\(momentTitle!) Note" : "Memo Fragment")
             : title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
 
         let fragment = Fragment(
             type: .note,
@@ -344,7 +347,7 @@ public struct CaptureView: View {
             subtitle: Date().formatted(date: .abbreviated, time: .shortened),
             text: text,
             gradientColors: [color, color.opacity(0.85)],
-            location: "Jakarta, ID",
+            location: resolvedLocation,
             phi: coords.phi,
             theta: coords.theta,
             radiusFactor: coords.radiusFactor
@@ -362,6 +365,7 @@ public struct CaptureView: View {
         let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? (momentTitle != nil ? "\(momentTitle!) Memo" : "Voice Memo")
             : title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
 
         let fragment = Fragment(
             type: .audio,
@@ -369,7 +373,7 @@ public struct CaptureView: View {
             subtitle: Date().formatted(date: .abbreviated, time: .shortened),
             mediaResourceName: fileURL?.path,
             gradientColors: [color, color.opacity(0.80)],
-            location: "Jakarta, ID",
+            location: resolvedLocation,
             duration: formattedDuration,
             audioWaveform: waveform,
             phi: coords.phi,
