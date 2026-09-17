@@ -198,7 +198,7 @@ public struct FragmentsView: View {
                 if let icon = icon {
                     Image(systemName: icon)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(iconColor)
+                        .foregroundStyle(isSelected ? Color(uiColor: .systemBackground) : .primary)
                 }
 
                 Text(title)

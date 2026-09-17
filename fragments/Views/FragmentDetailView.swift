@@ -145,9 +145,9 @@ public struct FragmentDetailView: View {
                 Text(fragment.type.displayName.uppercased())
                     .font(.system(size: 11, weight: .bold, design: .rounded))
             }
-            .foregroundStyle(fragment.type.accentColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(
                 Capsule()
                     .fill(Color(uiColor: .systemBackground).opacity(colorScheme == .dark ? 0.8 : 0.9))
@@ -155,7 +155,7 @@ public struct FragmentDetailView: View {
             )
             .overlay(
                 Capsule()
-                    .strokeBorder(fragment.type.accentColor.opacity(0.3), lineWidth: 1)
+                    .strokeBorder(.primary.opacity(0.3), lineWidth: 1)
             )
 
             Spacer()
@@ -168,16 +168,9 @@ public struct FragmentDetailView: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.primary)
                     .frame(width: 36, height: 36)
-                    .background(
-                        Circle()
-                            .fill(Color(uiColor: .systemBackground).opacity(colorScheme == .dark ? 0.8 : 0.9))
-                            .shadow(color: Color.black.opacity(0.12), radius: 8, y: 3)
-                    )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
-                    )
             }
+            .buttonStyle(.glass)
+            .clipShape(.circle)
         }
     }
 

@@ -108,7 +108,8 @@ public struct FragmentSphere: View {
                     .allowsHitTesting(item.normalizedZ > 0.35)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .center)
+            .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 4)

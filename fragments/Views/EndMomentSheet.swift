@@ -80,14 +80,13 @@ public struct EndMomentSheet: View {
                                                 .padding(.vertical, 8)
                                                 .background(
                                                     viewModel.selectedCategory == cat
-                                                        ? AnyShapeStyle(viewModel.selectedTheme.color ?? Color.primary)
+                                                        ? AnyShapeStyle(Color.primary)
                                                         : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
                                                     in: Capsule()
                                                 )
                                                 .foregroundStyle(
                                                     viewModel.selectedCategory == cat
-                                                        ?  Color.white
-                                                        : Color.primary
+                                                    ? Color(uiColor: .systemBackground) : .primary
                                                 )
                                         }
                                         .buttonStyle(PlainButtonStyle())

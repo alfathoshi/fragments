@@ -210,28 +210,31 @@ public struct CustomMemoView: View {
 
     private var viewportCanvas: some View {
         ZStack {
-            // Backdrop Canvas: adaptive dark graphite in dark mode / #8E8E93 in light mode
+            // Backdrop Canvas: matches chosen color gradient
             RoundedRectangle(cornerRadius: viewportCornerRadius, style: .continuous)
-                .fill(colorScheme == .dark ? Color(red: 0.16, green: 0.16, blue: 0.18) : Color(red: 0.557, green: 0.557, blue: 0.576))
+                .fill(
+                    LinearGradient(
+                        colors: activeColor.gradient,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .animation(.easeInOut(duration: 0.3), value: selectedColorIndex)
 
             // 5-Second Active Recording Perimeter Border Surrounding Viewport
             if recorder.isRecording {
                 // Subtle track channel along perimeter
                 RoundedRectangle(cornerRadius: viewportCornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.20), lineWidth: 4.0)
+                    .strokeBorder(Color.white.opacity(0.25), lineWidth: 4.0)
 
-                // Glowing progress stroke traveling around perimeter using selected color
+                // Glowing progress stroke traveling around perimeter
                 RoundedRectangle(cornerRadius: viewportCornerRadius, style: .continuous)
                     .trim(from: 0.0, to: min(CGFloat(recorder.elapsedTime / maxRecordingDuration), 1.0))
                     .stroke(
-                        LinearGradient(
-                            colors: activeColor.gradient,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
+                        Color.white,
                         style: StrokeStyle(lineWidth: 4.0, lineCap: .round)
                     )
-                    .shadow(color: activeColor.color.opacity(0.65), radius: 6)
+                    .shadow(color: Color.white.opacity(0.65), radius: 6)
                     .animation(.linear(duration: 0.05), value: recorder.elapsedTime)
             }
 
@@ -252,13 +255,13 @@ public struct CustomMemoView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.50), in: Capsule())
+                        .background(Color.black.opacity(0.40), in: Capsule())
                         .transition(.scale.combined(with: .opacity))
                     } else if recorder.hasRecordedAudio {
                         HStack(spacing: 6) {
                             Image(systemName: recorder.isPlaying ? "speaker.wave.2.fill" : "checkmark.circle.fill")
                                 .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(Color(red: 0.0, green: 0.533, blue: 1.0))
+                                .foregroundStyle(.white)
 
                             Text(recorder.isPlaying ? "Playing memo..." : "Recorded (5s)")
                                 .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -266,21 +269,21 @@ public struct CustomMemoView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.40), in: Capsule())
+                        .background(Color.black.opacity(0.35), in: Capsule())
                         .transition(.scale.combined(with: .opacity))
                     } else {
                         // Subtle Guide Tag
                         HStack(spacing: 5) {
                             Circle()
-                                .fill(Color.white.opacity(0.6))
+                                .fill(Color.white.opacity(0.7))
                                 .frame(width: 5, height: 5)
                             Text("5s VOICE MEMO")
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.85))
+                                .foregroundStyle(.white.opacity(0.95))
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(Color.black.opacity(0.25), in: Capsule())
+                        .background(Color.black.opacity(0.20), in: Capsule())
                     }
 
                     Spacer()
@@ -329,10 +332,10 @@ public struct CustomMemoView: View {
                         RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                             .fill(
                                 isCurrent
-                                    ? activeColor.color
+                                    ? Color.white
                                     : (isPlayed
                                         ? Color.white
-                                        : (isRecorded ? Color.white.opacity(0.85) : Color.white.opacity(0.18)))
+                                        : (isRecorded ? Color.white.opacity(0.90) : Color.white.opacity(0.30)))
                             )
                             .frame(width: 2.8, height: isRecorded ? max(6.0, barHeight) : 6.0)
                             .animation(.linear(duration: 0.05), value: barHeight)
@@ -346,9 +349,9 @@ public struct CustomMemoView: View {
                         let playheadX = geo.size.width * CGFloat(recorder.playbackProgress)
 
                         Rectangle()
-                            .fill(activeColor.color)
+                            .fill(Color.white)
                             .frame(width: 2.5, height: 140)
-                            .shadow(color: activeColor.color.opacity(0.7), radius: 4)
+                            .shadow(color: Color.black.opacity(0.3), radius: 3)
                             .position(x: max(2, min(playheadX, geo.size.width - 2)), y: geo.size.height / 2)
                     }
                     .allowsHitTesting(false)
