@@ -33,11 +33,14 @@ public struct FloatingCaptureOverlay: View {
     public var body: some View {
         ZStack(alignment: .bottomTrailing) {
             // Tap outside to dismiss background
-            Color.black.opacity(isExpanded ? 0.32 : 0.0)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    dismissMenu()
-                }
+            Button {
+                dismissMenu()
+            } label: {
+                Color.black.opacity(isExpanded ? 0.32 : 0.0)
+                    .ignoresSafeArea()
+            }
+            .buttonStyle(.plain)
+            .allowsHitTesting(isExpanded)
 
             // Floating Orbs Stack (Expands directly above the bottom-right capture button)
             VStack(alignment: .trailing, spacing: 18) {
@@ -188,6 +191,7 @@ public struct FloatingCaptureOverlay: View {
                 // 3D Glass Sphere / Orb
                 GlassOrb(icon: icon, gradient: gradient, shadowColor: shadowColor)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(OrbScaleButtonStyle())
     }
@@ -220,52 +224,6 @@ public struct GlassOrb: View {
 
     public var body: some View {
         ZStack {
-            // Ambient soft glowing halo
-//            Circle()
-//                .fill(shadowColor.opacity(0.35))
-//                .frame(width: size + 16, height: size + 16)
-//                .blur(radius: 12)
-//
-//            // Base spherical gradient
-//            Circle()
-//                .fill(
-//                    LinearGradient(
-//                        colors: gradient,
-//                        startPoint: .topLeading,
-//                        endPoint: .bottomTrailing
-//                    )
-//                )
-//                .frame(width: size, height: size)
-
-            // 3D Specular Highlight (top-left glass reflection)
-//            Circle()
-//                .fill(
-//                    RadialGradient(
-//                        colors: [
-//                            Color.white.opacity(0.65),
-//                            Color.white.opacity(0.20),
-//                            Color.clear
-//                        ],
-//                        center: .init(x: 0.32, y: 0.30),
-//                        startRadius: 2,
-//                        endRadius: size * 0.42
-//                    )
-//                )
-//                .frame(width: size, height: size)
-
-            // Inner rim stroke
-//            Circle()
-//                .stroke(
-//                    LinearGradient(
-//                        colors: [Color.white.opacity(0.55), Color.white.opacity(0.10)],
-//                        startPoint: .topLeading,
-//                        endPoint: .bottomTrailing
-//                    ),
-//                    lineWidth: 1.2
-//                )
-//                .frame(width: size, height: size)
-
-            // Center Glyph Icon
             Image(systemName: icon)
                 .font(.system(size: size * 0.38, weight: .bold))
                 .foregroundStyle(.primary)
@@ -275,6 +233,7 @@ public struct GlassOrb: View {
         }
         
         .frame(width: size, height: size)
+        .allowsHitTesting(false)
     }
 }
 
