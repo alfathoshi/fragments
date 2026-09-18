@@ -302,7 +302,7 @@ public final class CameraService: NSObject, @unchecked Sendable {
             guard let self = self else { return }
             self.captureSession.beginConfiguration()
             if self.captureSession.canSetSessionPreset(.photo) {
-                self.captureSession.sessionPreset = .photo
+                self.captureSession.sessionPreset = .high
             }
             self.captureSession.commitConfiguration()
         }
