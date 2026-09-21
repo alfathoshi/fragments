@@ -23,13 +23,32 @@ final class FragmentsViewModel {
     }
     
     var displayedFragments: [Fragment] {
+        let active = fragments.filter { !$0.isExpired }
         if let filter = selectedFilter {
-            return fragments.filter { $0.type == filter }
+            return active.filter { $0.type == filter }
         }
-        return fragments
+        return active
+    }
+    
+    func cleanupExpiredFragments() {
+        let expired = fragments.filter { $0.isExpired }
+        guard !expired.isEmpty else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+            fragments.removeAll { $0.isExpired }
+        }
+        for frag in expired {
+            momentManager.deleteStandaloneFragment(id: frag.id)
+        }
     }
     
     func triggerNewFragmentEntrance(_ newFragment: Fragment) {
+        cleanupExpiredFragments()
+        guard fragments.count < MomentManager.maxStandaloneFragments else {
+            showToast("Limit reached: max 15 fragments")
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
+
         var fragmentToEnter = newFragment
         // Dynamically compute optimal scattered coordinates avoiding existing fragments on the sphere
         let coords = Fragment.generateScatteredCoordinates(existing: fragments)
@@ -98,14 +117,17 @@ final class FragmentsViewModel {
     }
     
     func loadInitialFragments() {
+        momentManager.cleanupExpiredStandaloneFragments()
         if fragments.isEmpty && !momentManager.standaloneFragments.isEmpty {
-            fragments = momentManager.standaloneFragments
+            fragments = momentManager.standaloneFragments.filter { !$0.isExpired }
         }
+        cleanupExpiredFragments()
     }
     
     func syncFragments(_ newFragments: [Fragment]) {
-        if fragments != newFragments {
-            fragments = newFragments
+        let active = newFragments.filter { !$0.isExpired }
+        if fragments != active {
+            fragments = active
         }
     }
     

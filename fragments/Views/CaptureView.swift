@@ -150,6 +150,14 @@ public struct CaptureView: View {
                     }
                 }
             }
+            .alert(
+                viewModel.limitAlertTitle,
+                isPresented: $viewModel.showLimitAlert
+            ) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(viewModel.limitAlertMessage)
+            }
             .ignoresSafeArea(edges: .bottom)
         }
     }

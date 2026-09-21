@@ -15,6 +15,7 @@ public struct QuickCaptureSheet: View {
     @State private var title: String = ""
     @State private var textContent: String = ""
     @State private var location: String = ""
+    @State private var showLimitAlert: Bool = false
 
     public init(initialType: FragmentType = .photo, onCapture: @escaping (Fragment) -> Void) {
         self._selectedType = State(initialValue: initialType)
@@ -85,6 +86,11 @@ public struct QuickCaptureSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Float into Sphere") {
+                        MomentManager.shared.cleanupExpiredStandaloneFragments()
+                        if MomentManager.shared.standaloneFragments.count >= MomentManager.maxStandaloneFragments {
+                            showLimitAlert = true
+                            return
+                        }
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         let newFragment = previewFragment
                         dismiss()
@@ -92,6 +98,14 @@ public struct QuickCaptureSheet: View {
                     }
                     .font(.body.weight(.semibold))
                 }
+            }
+            .alert(
+                "Fragment Limit Reached",
+                isPresented: $showLimitAlert
+            ) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("You can only capture up to 15 fragments. Standalone fragments disappear after 24 hours, or you can delete some to capture more.")
             }
         }
     }

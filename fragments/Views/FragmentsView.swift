@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+internal import Combine
 
 public struct FragmentsView: View {
     // MARK: - State
@@ -13,6 +14,7 @@ public struct FragmentsView: View {
     @Binding public var selectedFragment: Fragment?
     @Binding public var incomingNewFragment: Fragment?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     
     @State private var viewModel: FragmentsViewModel
     @State private var showProfileSheet = false
@@ -110,6 +112,14 @@ public struct FragmentsView: View {
             }
             .onAppear {
                 viewModel.loadInitialFragments()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    viewModel.cleanupExpiredFragments()
+                }
+            }
+            .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
+                viewModel.cleanupExpiredFragments()
             }
             .onChange(of: viewModel.momentManager.standaloneFragments) { _, newFragments in
                 viewModel.syncFragments(newFragments)

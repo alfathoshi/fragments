@@ -216,6 +216,31 @@ public struct Fragment: Identifiable, Hashable {
         return formatter.localizedString(for: createdAt, relativeTo: Date())
     }
 
+    public static let expirationDuration: TimeInterval = 24 * 60 * 60 // 24 hours
+
+    public var expiresAt: Date {
+        createdAt.addingTimeInterval(Self.expirationDuration)
+    }
+
+    public var isExpired: Bool {
+        Date() >= expiresAt
+    }
+
+    public var timeRemainingText: String {
+        let remaining = expiresAt.timeIntervalSince(Date())
+        if remaining <= 0 {
+            return "Expired"
+        }
+        let totalMinutes = Int(remaining) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0 {
+            return "\(hours)h \(minutes)m left"
+        } else {
+            return "\(max(1, minutes))m left"
+        }
+    }
+
     // Resolves media file in local documents, temporary directory, or app bundle
     public var mediaURL: URL? {
         guard let name = mediaResourceName, !name.isEmpty else { return nil }

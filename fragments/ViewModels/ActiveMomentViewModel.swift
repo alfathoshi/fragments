@@ -15,6 +15,7 @@ final class ActiveMomentViewModel {
     var selectedFragment: Fragment? = nil
     var showCaptureSheet: Bool = false
     var showEndMomentSheet: Bool = false
+    var showLimitAlert: Bool = false
     var captureInitialType: FragmentType = .photo
     var orbPulse: Bool = false
     
@@ -31,8 +32,12 @@ final class ActiveMomentViewModel {
         self.autoOpenEnd = autoOpenEnd
         
         if let initType = initialCaptureType {
-            self.showCaptureSheet = true
-            self.captureInitialType = initType
+            if (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
+                self.showLimitAlert = true
+            } else {
+                self.showCaptureSheet = true
+                self.captureInitialType = initType
+            }
         } else if autoOpenEnd {
             self.showEndMomentSheet = true
         }
@@ -54,12 +59,20 @@ final class ActiveMomentViewModel {
     }
     
     func openCaptureSheet(type: FragmentType) {
+        if (session?.fragments.count ?? 0) >= MomentSession.maxFragments {
+            showLimitAlert = true
+            return
+        }
         captureInitialType = type
         showCaptureSheet = true
     }
     
     func handleCapturedFragment(_ newFragment: Fragment) {
-        momentManager.addFragment(newFragment)
+        if (session?.fragments.count ?? 0) < MomentSession.maxFragments {
+            momentManager.addFragment(newFragment)
+        } else {
+            showLimitAlert = true
+        }
         showCaptureSheet = false
     }
 }

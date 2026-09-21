@@ -41,8 +41,14 @@ public struct MomentSession: Identifiable, Hashable {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    /// Converts the session's captured Fragments into FolderItems for the FolderCollection model (capped at 5 items).
+    public static let maxFragments: Int = 15
+
+    public var isAtCapacity: Bool {
+        fragments.count >= Self.maxFragments
+    }
+
+    /// Converts the session's captured Fragments into FolderItems for the FolderCollection model (capped at max 15 items).
     public func createFolderItems() -> [FolderItem] {
-        return Array(fragments.prefix(5)).map { FolderItem(from: $0) }
+        return Array(fragments.prefix(Self.maxFragments)).map { FolderItem(from: $0) }
     }
 }

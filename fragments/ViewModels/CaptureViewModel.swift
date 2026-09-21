@@ -14,6 +14,9 @@ final class CaptureViewModel {
     var selectedMode: CaptureMode
     var activeSession: MomentSession?
     var activeMoment: FolderCollection?
+    var showLimitAlert: Bool = false
+    var limitAlertTitle: String = ""
+    var limitAlertMessage: String = ""
     var onCaptureFragment: ((Fragment) -> Void)?
 
     init(
@@ -28,7 +31,30 @@ final class CaptureViewModel {
         self.onCaptureFragment = onCaptureFragment
     }
 
+    func checkCanCapture() -> Bool {
+        if let session = activeSession {
+            if session.fragments.count >= MomentSession.maxFragments {
+                limitAlertTitle = "Moment Limit Reached"
+                limitAlertMessage = "A moment can contain a maximum of 15 fragments."
+                showLimitAlert = true
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                return false
+            }
+        } else {
+            MomentManager.shared.cleanupExpiredStandaloneFragments()
+            if MomentManager.shared.standaloneFragments.count >= MomentManager.maxStandaloneFragments {
+                limitAlertTitle = "Fragment Limit Reached"
+                limitAlertMessage = "You can only capture up to 15 fragments. Standalone fragments disappear after 24 hours, or you can delete some to capture more."
+                showLimitAlert = true
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                return false
+            }
+        }
+        return true
+    }
+
     func handlePhotoCapture(image: UIImage?, fileURL: URL?) {
+        guard checkCanCapture() else { return }
         let mediaPath = fileURL?.path
         let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
         let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
@@ -48,6 +74,7 @@ final class CaptureViewModel {
     }
 
     func handleVideoCapture(url: URL?, duration: TimeInterval) {
+        guard checkCanCapture() else { return }
         guard let sourceURL = url else { return }
         let formattedDuration = String(format: "%d:%02d", Int(duration) / 60, Int(duration) % 60)
         
@@ -81,6 +108,7 @@ final class CaptureViewModel {
     }
 
     func handleNoteCapture(title: String, text: String, color: Color) {
+        guard checkCanCapture() else { return }
         let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
         let momentTitle = activeMoment?.name ?? (activeSession != nil ? "Moment" : nil)
         let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -103,6 +131,7 @@ final class CaptureViewModel {
     }
 
     func handleMemoCapture(fileURL: URL?, duration: TimeInterval, waveform: [CGFloat], title: String, color: Color) {
+        guard checkCanCapture() else { return }
         let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
         let mins = Int(duration) / 60
         let secs = Int(duration) % 60

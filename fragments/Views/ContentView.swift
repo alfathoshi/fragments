@@ -90,8 +90,13 @@ struct ContentView: View {
                             viewModel.pendingQuickCaptureType = type
                             viewModel.showDiscardForQuickCaptureAlert = true
                         } else {
-                            viewModel.quickCaptureInitialType = type
-                            viewModel.showQuickCaptureSheet = true
+                            viewModel.momentManager.cleanupExpiredStandaloneFragments()
+                            if viewModel.momentManager.standaloneFragments.count >= MomentManager.maxStandaloneFragments {
+                                viewModel.showStandaloneLimitAlert = true
+                            } else {
+                                viewModel.quickCaptureInitialType = type
+                                viewModel.showQuickCaptureSheet = true
+                            }
                         }
                     }
                 )
@@ -233,6 +238,22 @@ struct ContentView: View {
             }
         } message: {
             Text("Starting a quick capture will discard your currently active moment. Any captured fragments will not be saved.")
+        }
+        .alert(
+            "Fragment Limit Reached",
+            isPresented: $viewModel.showStandaloneLimitAlert
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("You can keep up to 15 fragments in Fragments. Standalone fragments disappear after 24 hours, or you can delete some to capture more.")
+        }
+        .alert(
+            "Moment Limit Reached",
+            isPresented: $viewModel.showMomentLimitAlert
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("A moment can contain a maximum of 15 fragments. You have reached the limit for this moment.")
         }
         .onAppear {
             viewModel.setModelContext(modelContext)

@@ -26,6 +26,7 @@ private let kPersistedSessionKey = "fragments.activeSessionInfo"
 @MainActor
 final class MomentManager {
     static let shared = MomentManager()
+    public static let maxStandaloneFragments: Int = 15
 
     var activeSession: MomentSession? = nil
     var collections: [FolderCollection] = []
@@ -72,10 +73,24 @@ final class MomentManager {
             self.collections = validMoments.map { $0.toFolderCollection() }
         }
         
-        // Load Standalone Fragments
+        // Load Standalone Fragments (automatically purge fragments older than 24 hours)
         let fragmentDescriptor = FetchDescriptor<SDFragment>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         if let sdFragments = try? ctx.fetch(fragmentDescriptor) {
-            self.standaloneFragments = sdFragments.map { $0.toFragment() }
+            let expirationThreshold = Date().addingTimeInterval(-Fragment.expirationDuration)
+            var validFragments: [Fragment] = []
+            var hasDeletedExpired = false
+            for sdFrag in sdFragments {
+                if sdFrag.createdAt < expirationThreshold {
+                    ctx.delete(sdFrag)
+                    hasDeletedExpired = true
+                } else {
+                    validFragments.append(sdFrag.toFragment())
+                }
+            }
+            if hasDeletedExpired {
+                try? ctx.save()
+            }
+            self.standaloneFragments = Array(validFragments.prefix(Self.maxStandaloneFragments))
         }
 
         // Restore active session if a Live Activity is still running
@@ -113,8 +128,32 @@ final class MomentManager {
         }
     }
 
-    /// Saves a standalone fragment to SwiftData and updates local array
+    /// Removes standalone fragments older than 24 hours from SwiftData and local array
+    func cleanupExpiredStandaloneFragments() {
+        let expirationThreshold = Date().addingTimeInterval(-Fragment.expirationDuration)
+        let expiredIDs = standaloneFragments.filter { $0.createdAt < expirationThreshold }.map { $0.id }
+        guard !expiredIDs.isEmpty else { return }
+
+        standaloneFragments.removeAll { $0.createdAt < expirationThreshold }
+        if let ctx = modelContext {
+            let descriptor = FetchDescriptor<SDFragment>()
+            if let allSD = try? ctx.fetch(descriptor) {
+                var hasDeleted = false
+                for sdFrag in allSD where sdFrag.createdAt < expirationThreshold {
+                    ctx.delete(sdFrag)
+                    hasDeleted = true
+                }
+                if hasDeleted {
+                    try? ctx.save()
+                }
+            }
+        }
+    }
+
+    /// Saves a standalone fragment to SwiftData and updates local array (capped at 15 items)
     func addStandaloneFragment(_ fragment: Fragment) {
+        cleanupExpiredStandaloneFragments()
+        guard standaloneFragments.count < Self.maxStandaloneFragments else { return }
         if !standaloneFragments.contains(where: { $0.id == fragment.id }) {
             standaloneFragments.insert(fragment, at: 0)
         }
@@ -217,9 +256,10 @@ final class MomentManager {
         startLiveActivity(session: newSession)
     }
 
-    /// Adds a newly captured fragment to the active session
+    /// Adds a newly captured fragment to the active session (capped at 15 items)
     func addFragment(_ fragment: Fragment) {
         guard var session = activeSession else { return }
+        guard session.fragments.count < MomentSession.maxFragments else { return }
         var newFragment = fragment
         let coords = Fragment.generateScatteredCoordinates(existing: session.fragments)
         newFragment.phi = coords.phi

@@ -24,6 +24,8 @@ final class ContentViewModel {
     var showDiscardConfirmation: Bool = false
     var showResumeOrNewMomentAlert: Bool = false
     var showDiscardForQuickCaptureAlert: Bool = false
+    var showStandaloneLimitAlert: Bool = false
+    var showMomentLimitAlert: Bool = false
     var selectedFragment: Fragment? = nil
     var quickCaptureInitialType: FragmentType = .photo
     var pendingQuickCaptureType: FragmentType = .photo
@@ -67,11 +69,25 @@ final class ContentViewModel {
             default:      targetType = .photo
             }
 
-            showActiveMomentView = false
-            activeMomentAutoOpenEnd = false
-            activeMomentInitialCaptureType = targetType
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.showActiveMomentView = true
+            if momentManager.isSessionActive {
+                if (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
+                    showMomentLimitAlert = true
+                } else {
+                    showActiveMomentView = false
+                    activeMomentAutoOpenEnd = false
+                    activeMomentInitialCaptureType = targetType
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.showActiveMomentView = true
+                    }
+                }
+            } else {
+                momentManager.cleanupExpiredStandaloneFragments()
+                if momentManager.standaloneFragments.count >= MomentManager.maxStandaloneFragments {
+                    showStandaloneLimitAlert = true
+                } else {
+                    quickCaptureInitialType = targetType
+                    showQuickCaptureSheet = true
+                }
             }
         } else if url.host == "moment" {
             activeMomentInitialCaptureType = nil
@@ -99,13 +115,22 @@ final class ContentViewModel {
     func handleFragmentCaptured(_ newFragment: Fragment) {
         if momentManager.isSessionActive {
             // ONLY add to active moment session (do not store in standalone FragmentsView)
-            momentManager.addFragment(newFragment)
+            if (momentManager.activeSession?.fragments.count ?? 0) < MomentSession.maxFragments {
+                momentManager.addFragment(newFragment)
+            } else {
+                showMomentLimitAlert = true
+            }
         } else {
             // Standalone quick capture outside any moment session
-            incomingNewFragment = newFragment
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                selectedTab = .fragments
-                activeTab = .fragments
+            momentManager.cleanupExpiredStandaloneFragments()
+            if momentManager.standaloneFragments.count < MomentManager.maxStandaloneFragments {
+                incomingNewFragment = newFragment
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                    selectedTab = .fragments
+                    activeTab = .fragments
+                }
+            } else {
+                showStandaloneLimitAlert = true
             }
         }
     }
@@ -136,8 +161,13 @@ final class ContentViewModel {
 
     func discardForQuickCapture() {
         momentManager.cancelSession()
-        quickCaptureInitialType = pendingQuickCaptureType
-        showQuickCaptureSheet = true
+        momentManager.cleanupExpiredStandaloneFragments()
+        if momentManager.standaloneFragments.count >= MomentManager.maxStandaloneFragments {
+            showStandaloneLimitAlert = true
+        } else {
+            quickCaptureInitialType = pendingQuickCaptureType
+            showQuickCaptureSheet = true
+        }
     }
 
     func onSaveComplete() {

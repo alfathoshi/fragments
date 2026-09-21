@@ -179,6 +179,14 @@ struct ActiveMomentView: View {
                 viewModel.showEndMomentSheet = true
             }
         }
+        .alert(
+            "Moment Limit Reached",
+            isPresented: $viewModel.showLimitAlert
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("A moment can contain a maximum of 15 fragments. You have reached the limit for this moment.")
+        }
     }
 
     // MARK: - Top Session Header
@@ -204,11 +212,11 @@ struct ActiveMomentView: View {
             HStack(spacing: 4) {
                 Image(systemName: "square.stack.3d.up.fill")
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(session.isAtCapacity ? .orange : .secondary)
 
-                Text(session.fragmentCountText)
+                Text("\(session.fragmentCount)/\(MomentSession.maxFragments) fragments")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(session.isAtCapacity ? .orange : .primary)
             }
         }
         .padding(.horizontal, 20)
@@ -220,33 +228,34 @@ struct ActiveMomentView: View {
     private func bottomFloatingOrbDock(session: MomentSession) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            viewModel.openCaptureSheet(type: .photo)
+            if session.isAtCapacity {
+                viewModel.showLimitAlert = true
+            } else {
+                viewModel.openCaptureSheet(type: .photo)
+            }
         } label: {
             HStack(spacing: 14) {
                 // Floating ThinkingOrb (working state)
-
                 ThinkingOrb(state: .connecting, size: 48)
-                
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Capture Fragment")
+                    Text(session.isAtCapacity ? "Limit Reached" : "Capture Fragment")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
 
-                    Text("Tap to add fragments...")
+                    Text(session.isAtCapacity ? "Max 15 fragments reached" : "Tap to add fragments...")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Image(systemName: "plus.circle.fill")
+                Image(systemName: session.isAtCapacity ? "exclamationmark.circle.fill" : "plus.circle.fill")
                     .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(session.isAtCapacity ? .orange : .primary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            
         }
         .buttonStyle(.glass)
         .padding(.horizontal, 24)
