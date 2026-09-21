@@ -22,7 +22,6 @@ public struct ProfileView: View {
     // MARK: - Interactive State
     @State private var isEditingProfile = false
     @State private var editSignatureText = ""
-    @State private var showRateUsAlert = false
     @State private var showContactFallbackAlert = false
     @State private var showCopiedNotification = false
 
@@ -65,11 +64,6 @@ public struct ProfileView: View {
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
                 }
-            }
-            .alert("Rate Fragments", isPresented: $showRateUsAlert) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("Fragments will be available on the App Store soon! We appreciate your patience and support.")
             }
             .alert("Email Client Not Found", isPresented: $showContactFallbackAlert) {
                 Button("Copy Email Address") {
@@ -207,11 +201,12 @@ public struct ProfileView: View {
                 icon: "star.fill",
                 iconColor: Color.orange,
                 title: "Rate Us",
-                badge: "Soon",
-                showDisclosure: false
+                showDisclosure: true
             ) {
                 triggerHaptic()
-                showRateUsAlert = true
+                if let url = URL(string: "https://apps.apple.com/app/id6812455792?action=write-review") {
+                    openURL(url)
+                }
             }
 
             Divider()
