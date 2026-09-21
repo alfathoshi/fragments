@@ -6,3 +6,9 @@ buildDerivedData/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 .DS_Store
+
+# Agent & Automation Tools
+.agents/
+.argent/
+goldie/
+skills-lock.json

@@ -15,6 +15,7 @@ public struct FragmentsView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     @State private var viewModel: FragmentsViewModel
+    @State private var showProfileSheet = false
 
     public init(
         incomingNewFragment: Binding<Fragment?> = .constant(nil),
@@ -90,6 +91,16 @@ public struct FragmentsView: View {
             }
             .navigationTitle("Fragments")
             .toolbarTitleDisplayMode(.inlineLarge)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProfileToolbarButton {
+                        showProfileSheet = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showProfileSheet) {
+                ProfileView()
+            }
             .sheet(isPresented: $viewModel.showQuickCaptureSheet) {
                 QuickCaptureSheet { newFragment in
                     viewModel.triggerNewFragmentEntrance(newFragment)

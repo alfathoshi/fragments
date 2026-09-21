@@ -51,6 +51,7 @@ struct MomentsView: View {
     // MARK: - State
 
     @State private var viewModel: MomentsViewModel
+    @State private var showProfileSheet = false
 
     init(momentManager: MomentManager = MomentManager.shared) {
         _viewModel = State(wrappedValue: MomentsViewModel(momentManager: momentManager))
@@ -73,58 +74,59 @@ struct MomentsView: View {
                             // 2-Column Grid
                             LazyVGrid(columns: columns, spacing: 24) {
                                 ForEach(viewModel.momentManager.collections) { collection in
-                                    Button {
-                                        viewModel.handleMomentSelection(collection)
-                                    } label: {
-                                        VStack(alignment: .center, spacing: 12) {
-                                            // Folder in closed resting preview state
-                                            MomentFolder(
-                                                items: collection.items,
-                                                isOpen: .constant(false),
-                                                size: CGSize(width: 168, height: 166),
-                                                folderColor: collection.color,
-                                                onTapFolder: {
-                                                    viewModel.handleMomentSelection(collection)
-                                                }
-                                            )
-                                            .overlay(alignment: .topTrailing) {
-                                                if viewModel.isEditing {
-                                                    Circle()
-                                                        .fill(.ultraThinMaterial)
-                                                        .frame(width: 30, height: 30)
-                                                        .overlay(
-                                                            Circle()
-                                                                .stroke(Color.white.opacity(0.35), lineWidth: 1)
-                                                        )
-                                                        .overlay(
-                                                            Image(systemName: "pencil")
-                                                                .font(.system(size: 13, weight: .bold))
-                                                                .foregroundStyle(Color.primary)
-                                                        )
-                                                        .shadow(color: Color.black.opacity(0.15), radius: 6, y: 2)
-                                                        .offset(x: 6, y: -6)
-                                                        .transition(.scale.combined(with: .opacity))
-                                                }
+                                    VStack(alignment: .center, spacing: 12) {
+                                        // Folder in closed resting preview state
+                                        MomentFolder(
+                                            items: collection.items,
+                                            isOpen: .constant(false),
+                                            size: CGSize(width: 168, height: 166),
+                                            folderColor: collection.color,
+                                            onTapFolder: {
+                                                viewModel.handleMomentSelection(collection)
                                             }
-
-                                            // Folder metadata text under card
-                                            VStack(spacing: 3) {
-                                                Text(collection.name)
-                                                    .font(.system(size: 14, weight: .semibold))
-                                                    .foregroundStyle(.primary)
-                                                    .lineLimit(1)
-
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "square.stack.3d.up.fill")
-                                                        .font(.system(size: 10))
-                                                    Text(collection.fragmentCountText)
-                                                        .font(.system(size: 12, weight: .regular))
-                                                }
-                                                .foregroundStyle(.secondary)
+                                        )
+                                        .overlay(alignment: .topTrailing) {
+                                            if viewModel.isEditing {
+                                                Circle()
+                                                    .fill(.ultraThinMaterial)
+                                                    .frame(width: 30, height: 30)
+                                                    .overlay(
+                                                        Circle()
+                                                            .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                                                    )
+                                                    .overlay(
+                                                        Image(systemName: "pencil")
+                                                            .font(.system(size: 13, weight: .bold))
+                                                            .foregroundStyle(Color.primary)
+                                                    )
+                                                    .shadow(color: Color.black.opacity(0.15), radius: 6, y: 2)
+                                                    .offset(x: 6, y: -6)
+                                                    .transition(.scale.combined(with: .opacity))
                                             }
                                         }
+
+                                        // Folder metadata text under card
+                                        VStack(spacing: 3) {
+                                            Text(collection.name)
+                                                .font(.system(size: 14, weight: .semibold))
+                                                .foregroundStyle(.primary)
+                                                .lineLimit(1)
+
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "square.stack.3d.up.fill")
+                                                    .font(.system(size: 10))
+                                                Text(collection.fragmentCountText)
+                                                    .font(.system(size: 12, weight: .regular))
+                                            }
+                                            .foregroundStyle(.secondary)
+                                        }
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            viewModel.handleMomentSelection(collection)
+                                        }
                                     }
-                                    .buttonStyle(PlainButtonStyle())
+                                    .pressableFeedback()
                                 }
                             }
                             .padding(.horizontal, 20)
@@ -144,10 +146,19 @@ struct MomentsView: View {
                             viewModel.toggleEditing()
                         } label: {
                             Text(viewModel.isEditing ? "Done" : "Edit")
-                                .font(.system(size: 16, weight: viewModel.isEditing ? .bold : .medium))
+                                .font(.system(size: 16, weight: .medium))
                         }
                     }
                 }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProfileToolbarButton {
+                        showProfileSheet = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showProfileSheet) {
+                ProfileView()
             }
             .blur(radius: viewModel.editingCollection != nil ? 16 : 0)
             .animation(.easeInOut(duration: 0.28), value: viewModel.editingCollection != nil)
@@ -613,6 +624,32 @@ public struct FolderColorPickerSheet: View {
 private extension Color {
     static let roseGold = Color(red: 0.95, green: 0.65, blue: 0.70)
 }
+
+// MARK: - Pressable Feedback Modifier
+
+private struct PressableFeedbackModifier: ViewModifier {
+    @GestureState private var isPressed = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isPressed ? 0.96 : 1.0)
+            .opacity(isPressed ? 0.85 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: isPressed)
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: .infinity)
+                    .updating($isPressed) { currentState, gestureState, _ in
+                        gestureState = currentState
+                    }
+            )
+    }
+}
+
+extension View {
+    func pressableFeedback() -> some View {
+        modifier(PressableFeedbackModifier())
+    }
+}
+
 
 // MARK: - Previews
 

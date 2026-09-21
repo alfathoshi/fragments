@@ -100,6 +100,7 @@ public struct MomentFolder<CardContent: View>: View {
             } else {
                 folderZStack
                     .onTapGesture {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         if let customAction = onTapFolder {
                             customAction()
                         } else {
@@ -326,8 +327,13 @@ public struct MomentFolder<CardContent: View>: View {
             if isExpanded {
                 onTapItem?(item)
             } else {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.72, blendDuration: 0)) {
-                    isOpen = true
+                if let customAction = onTapFolder {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    customAction()
+                } else {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.72, blendDuration: 0)) {
+                        isOpen = true
+                    }
                 }
             }
         }
