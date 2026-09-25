@@ -80,6 +80,7 @@ struct ActiveMomentView: View {
                         } label: {
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.primary)
                         }
                     }
 
@@ -91,9 +92,8 @@ struct ActiveMomentView: View {
                             Text("Save Moment")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
                         }
-                        .buttonStyle(.glassProminent)
+                        .glassProminentButtonStyle()
                         .tint(.primary)
-                        .shadow(color: Color.red.opacity(0.35), radius: 5, y: 2)
                     }
                 }
             }
@@ -257,7 +257,7 @@ struct ActiveMomentView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .buttonStyle(.glass)
+        .floatingDockButtonStyle()
         .padding(.horizontal, 24)
         .onAppear {
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {

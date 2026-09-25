@@ -169,8 +169,7 @@ public struct FragmentDetailView: View {
                     .foregroundStyle(.primary)
                     .frame(width: 36, height: 36)
             }
-            .buttonStyle(.glass)
-            .clipShape(.circle)
+            .glassCircleButtonStyle()
         }
     }
 
@@ -632,7 +631,7 @@ public struct FragmentDetailView: View {
         .onTapGesture {
             // Absorb taps on bottom card so it doesn't dismiss
         }
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .adaptiveGlassEffect(.regular, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
     }
 
     private func secondaryButtonLabel(icon: String, title: String, isDestructive: Bool = false) -> some View {

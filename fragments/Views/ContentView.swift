@@ -22,15 +22,7 @@ struct ContentView: View {
         ZStack(alignment: .bottom) {
             // Native TabView (Blurred when Capture Menu or Fragment Detail is Open)
             TabView(selection: $viewModel.selectedTab) {
-                if #available(iOS 27.0, *) {
-                    Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .prominent) {
-                        Color.clear
-                    }
-                } else {
-                    Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .search) {
-                        Color.clear
-                    }
-                }
+                
 
                 Tab(value: AppTab.fragments) {
                     FragmentsView(
@@ -59,6 +51,16 @@ struct ContentView: View {
                     }
                     .environment(\.symbolVariants, .none)
                     .id("tab_moments_\(viewModel.currentTab == .logs)")
+                }
+                
+                if #available(iOS 27.0, *) {
+                    Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .prominent) {
+                        Color.clear
+                    }
+                } else {
+                    Tab("Capture", systemImage: "plus", value: AppTab.capture, role: .search) {
+                        Color.clear
+                    }
                 }
             }
             .tint(.primary)
@@ -303,16 +305,14 @@ struct ContentView: View {
                             Image(systemName: "trash")
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(.red)
-                                .frame(width: 32, height: 32)
+                                .frame(width: 38, height: 38)
                         }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
-                        .clipShape(Circle())
+                        .glassCircleButtonStyle()
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                 }
-                .buttonStyle(.glass)
+                .floatingDockButtonStyle()
                 .padding(.horizontal, 20)
             }
         }

@@ -160,7 +160,7 @@ public struct EndMomentSheet: View {
                         dismiss()
                     }
                     .font(.body.weight(.semibold))
-                    .buttonStyle(.glassProminent)
+                    .glassProminentButtonStyle()
                     .tint(.primary)
                     
                 }

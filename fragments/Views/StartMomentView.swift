@@ -137,7 +137,7 @@ public struct StartMomentView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 32)
-                    .buttonStyle(.glass)
+                    .glassButtonStyle()
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())

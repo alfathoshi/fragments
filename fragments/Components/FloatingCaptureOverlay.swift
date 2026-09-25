@@ -229,7 +229,7 @@ public struct GlassOrb: View {
                 .foregroundStyle(.primary)
                 .shadow(color: .black.opacity(0.25), radius: 3, y: 1.5)
                 .frame(width: size, height: size)
-                .glassEffect(.clear, in: .circle)
+                .adaptiveGlassEffect(.clear, in: Circle())
         }
         
         .frame(width: size, height: size)

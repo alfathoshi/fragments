@@ -52,6 +52,7 @@ struct fragmentsApp: App {
                     .transition(.opacity)
                 }
             }
+            .tint(Color.primary)
         }
         .modelContainer(sharedModelContainer)
     }

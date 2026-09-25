@@ -364,7 +364,7 @@ public struct ProfileView: View {
                         isEditingProfile = false
                         triggerHaptic()
                     }
-                    .buttonStyle(.glassProminent)
+                    .glassProminentButtonStyle()
                     .font(.body.weight(.semibold))
                     .tint(.primary)
                 }
