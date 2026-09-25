@@ -9,6 +9,7 @@ import SwiftUI
 
 public enum CaptureMenuStage {
     case primary      // 2 options: Start a Moment, Quick Capture
+    case momentScope  // 2 options: Personal, Shared
     case suboptions   // 4 options: Photo, Video, Note, Audio
 }
 
@@ -17,17 +18,36 @@ public struct FloatingCaptureOverlay: View {
     @State private var stage: CaptureMenuStage = .primary
     @State private var isExpanded: Bool = false
 
-    public var onSelectStartMoment: () -> Void
+    public var onSelectStartPersonalMoment: () -> Void
+    public var onSelectStartSharedMoment: () -> Void
     public var onSelectQuickCaptureType: (FragmentType) -> Void
+
+    public init(
+        isOpen: Binding<Bool>,
+        onSelectStartPersonalMoment: @escaping () -> Void,
+        onSelectStartSharedMoment: @escaping () -> Void,
+        onSelectQuickCaptureType: @escaping (FragmentType) -> Void
+    ) {
+        self._isOpen = isOpen
+        self.onSelectStartPersonalMoment = onSelectStartPersonalMoment
+        self.onSelectStartSharedMoment = onSelectStartSharedMoment
+        self.onSelectQuickCaptureType = onSelectQuickCaptureType
+        if CommandLine.arguments.contains("-momentScope") {
+            self._stage = State(initialValue: .momentScope)
+        }
+    }
 
     public init(
         isOpen: Binding<Bool>,
         onSelectStartMoment: @escaping () -> Void,
         onSelectQuickCaptureType: @escaping (FragmentType) -> Void
     ) {
-        self._isOpen = isOpen
-        self.onSelectStartMoment = onSelectStartMoment
-        self.onSelectQuickCaptureType = onSelectQuickCaptureType
+        self.init(
+            isOpen: isOpen,
+            onSelectStartPersonalMoment: onSelectStartMoment,
+            onSelectStartSharedMoment: onSelectStartMoment,
+            onSelectQuickCaptureType: onSelectQuickCaptureType
+        )
     }
 
     public var body: some View {
@@ -47,6 +67,16 @@ public struct FloatingCaptureOverlay: View {
                 switch stage {
                 case .primary:
                     primaryOrbs
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.6, anchor: .bottomTrailing)
+                                .combined(with: .opacity)
+                                .combined(with: .offset(y: 12)),
+                            removal: .scale(scale: 0.6, anchor: .bottomTrailing)
+                                .combined(with: .opacity)
+                        ))
+
+                case .momentScope:
+                    momentScopeOrbs
                         .transition(.asymmetric(
                             insertion: .scale(scale: 0.6, anchor: .bottomTrailing)
                                 .combined(with: .opacity)
@@ -84,15 +114,16 @@ public struct FloatingCaptureOverlay: View {
     // MARK: - 1. Primary Orbs (2 Options)
     private var primaryOrbs: some View {
         VStack(alignment: .trailing, spacing: 18) {
-            // Option 1: Start a Moment
+            // Option 1: Start a Moment (Expands to Personal / Shared)
             orbRow(
                 title: "Start a Moment",
                 icon: "sparkles.rectangle.stack.fill",
                 gradient: [.white, .black],
                 shadowColor: Color.white
             ) {
-                dismissMenu {
-                    onSelectStartMoment()
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+                    stage = .momentScope
                 }
             }
 
@@ -106,6 +137,35 @@ public struct FloatingCaptureOverlay: View {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
                     stage = .suboptions
+                }
+            }
+        }
+    }
+
+    // MARK: - 2. Moment Scope Orbs (Personal vs Shared)
+    private var momentScopeOrbs: some View {
+        VStack(alignment: .trailing, spacing: 18) {
+            // Option 1: Personal Moment
+            orbRow(
+                title: "Personal",
+                icon: "person.fill",
+                gradient: [.white, .black],
+                shadowColor: Color.white
+            ) {
+                dismissMenu {
+                    onSelectStartPersonalMoment()
+                }
+            }
+
+            // Option 2: Shared Room
+            orbRow(
+                title: "Shared",
+                icon: "person.2.fill",
+                gradient: [.white, .black],
+                shadowColor: Color.white
+            ) {
+                dismissMenu {
+                    onSelectStartSharedMoment()
                 }
             }
         }

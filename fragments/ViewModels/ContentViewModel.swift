@@ -17,6 +17,39 @@ final class ContentViewModel {
     var activeTab: AppTab = .fragments
     var incomingNewFragment: Fragment? = nil
 
+    init() {
+        if CommandLine.arguments.contains("-momentsTab") {
+            selectedTab = .logs
+            activeTab = .logs
+        }
+        if CommandLine.arguments.contains("-openCaptureMenu") {
+            isCaptureMenuOpen = true
+        }
+        if CommandLine.arguments.contains("-activeSharedMoment") {
+            let sampleRoom = Room(
+                id: "sample_shared_room",
+                name: "Bali Trip 2026",
+                emoji: "🌴",
+                createdAt: Date(),
+                createdBy: "local_user",
+                memberCount: 3,
+                fragmentCount: 2
+            )
+            let sampleSession = MomentSession(
+                startDate: Date().addingTimeInterval(-320),
+                fragments: [
+                    Fragment(type: .photo, title: "Bali Sunset", subtitle: "06:15 PM"),
+                    Fragment(type: .note, title: "Dinner plan", subtitle: "06:20 PM")
+                ],
+                location: "Canggu, Bali",
+                isShared: true,
+                room: sampleRoom
+            )
+            momentManager.activeSession = sampleSession
+            showActiveMomentView = true
+        }
+    }
+
     // Floating Capture Menu & Modals
     var isCaptureMenuOpen: Bool = false
     var showActiveMomentView: Bool = false
@@ -31,6 +64,7 @@ final class ContentViewModel {
     var pendingQuickCaptureType: FragmentType = .photo
     var activeMomentInitialCaptureType: FragmentType? = nil
     var activeMomentAutoOpenEnd: Bool = false
+    var pendingStartMomentIsShared: Bool = false
 
     var currentTab: AppTab {
         selectedTab == .capture ? activeTab : selectedTab
@@ -153,10 +187,35 @@ final class ContentViewModel {
         showActiveMomentView = true
     }
 
+    func handleStartPersonalMoment() {
+        if momentManager.isSessionActive {
+            pendingStartMomentIsShared = false
+            showResumeOrNewMomentAlert = true
+        } else {
+            momentManager.startSession(isShared: false)
+            showActiveMomentView = true
+        }
+    }
+
+    func handleStartSharedMoment() {
+        if momentManager.isSessionActive {
+            pendingStartMomentIsShared = true
+            showResumeOrNewMomentAlert = true
+        } else {
+            momentManager.startSharedSession()
+            showActiveMomentView = true
+        }
+    }
+
     func startNewMoment() {
         momentManager.cancelSession()
-        momentManager.startSession()
-        showActiveMomentView = true
+        if pendingStartMomentIsShared {
+            momentManager.startSharedSession()
+            showActiveMomentView = true
+        } else {
+            momentManager.startSession(isShared: false)
+            showActiveMomentView = true
+        }
     }
 
     func discardForQuickCapture() {

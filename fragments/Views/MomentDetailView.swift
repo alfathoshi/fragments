@@ -17,6 +17,7 @@ public struct MomentDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var viewModel: MomentDetailViewModel
+    @State private var showMembersSheet: Bool = false
 
     public init(
         collection: FolderCollection,
@@ -25,6 +26,19 @@ public struct MomentDetailView: View {
         self.collection = collection
         self.onUpdateCollection = onUpdateCollection
         self._viewModel = State(wrappedValue: MomentDetailViewModel(collection: collection, onUpdateCollection: onUpdateCollection))
+    }
+
+    private var resolvedRoom: Room {
+        if let roomID = collection.roomID, let found = RoomManager.shared.rooms.first(where: { $0.id == roomID }) {
+            return found
+        }
+        return Room(
+            id: collection.roomID ?? collection.id.uuidString,
+            name: collection.name,
+            emoji: "👥",
+            createdAt: collection.date,
+            createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        )
     }
 
     private var formattedDateText: String {
@@ -86,6 +100,17 @@ public struct MomentDetailView: View {
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if collection.isShared {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showMembersSheet = true
+                    } label: {
+                        Image(systemName: "person.2")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .accessibilityLabel("Room Members")
+                }
+
                 if viewModel.hasReordered {
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -114,6 +139,9 @@ public struct MomentDetailView: View {
                     .accessibilityLabel("Save layout")
                 }
             }
+        }
+        .sheet(isPresented: $showMembersSheet) {
+            RoomMembersSheet(room: resolvedRoom)
         }
         .onAppear {
             viewModel.initializeItems()

@@ -104,6 +104,8 @@ public final class SDMoment {
     public var date: Date
     public var colorRGBAString: String?
     public var orderedItemIDs: [String] = []
+    public var isShared: Bool = false
+    public var roomID: String? = nil
     
     @Relationship(deleteRule: .cascade, inverse: \SDMomentItem.moment)
     public var items: [SDMomentItem]
@@ -115,7 +117,9 @@ public final class SDMoment {
         date: Date,
         colorRGBAString: String? = nil,
         items: [SDMomentItem] = [],
-        orderedItemIDs: [String] = []
+        orderedItemIDs: [String] = [],
+        isShared: Bool = false,
+        roomID: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -124,6 +128,8 @@ public final class SDMoment {
         self.colorRGBAString = colorRGBAString
         self.items = items
         self.orderedItemIDs = orderedItemIDs
+        self.isShared = isShared
+        self.roomID = roomID
     }
 
     public convenience init(from collection: FolderCollection) {
@@ -136,7 +142,9 @@ public final class SDMoment {
             date: collection.date,
             colorRGBAString: collection.color?.toRGBAString(),
             items: sdItems,
-            orderedItemIDs: orderIDs
+            orderedItemIDs: orderIDs,
+            isShared: collection.isShared,
+            roomID: collection.roomID
         )
     }
 
@@ -164,7 +172,9 @@ public final class SDMoment {
             location: location,
             date: date,
             items: folderItems,
-            color: color
+            color: color,
+            isShared: isShared,
+            roomID: roomID
         )
     }
 

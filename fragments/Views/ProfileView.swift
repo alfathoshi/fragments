@@ -24,6 +24,7 @@ public struct ProfileView: View {
     @State private var editSignatureText = ""
     @State private var showContactFallbackAlert = false
     @State private var showCopiedNotification = false
+    @State private var showCloudKitDebug = false
 
     public init(profileManager: ProfileManager = ProfileManager.shared) {
         self.profileManager = profileManager
@@ -85,6 +86,11 @@ public struct ProfileView: View {
             .sheet(isPresented: $isEditingProfile) {
                 editProfileSheet
             }
+            #if DEBUG
+            .sheet(isPresented: $showCloudKitDebug) {
+                CloudKitDebugView()
+            }
+            #endif
             .overlay(alignment: .top) {
                 if showCopiedNotification {
                     HStack(spacing: 8) {
@@ -239,6 +245,22 @@ public struct ProfileView: View {
                     openURL(url)
                 }
             }
+
+            #if DEBUG
+            Divider()
+                .padding(.leading, 56)
+
+            actionRow(
+                icon: "icloud.fill",
+                iconColor: Color.purple,
+                title: "CloudKit Rooms Debug",
+                subtitle: "Multi-user Phase 6 test harness",
+                showDisclosure: true
+            ) {
+                triggerHaptic()
+                showCloudKitDebug = true
+            }
+            #endif
         }
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)

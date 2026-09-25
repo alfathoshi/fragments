@@ -50,7 +50,9 @@ public struct CaptureView: View {
         initialMode: CaptureMode = .photo,
         activeMoment: FolderCollection? = nil,
         activeSession: MomentSession? = nil,
+        captureContext: CaptureContext = .personal,
         onCaptureFragment: ((Fragment) -> Void)? = nil,
+        onCaptureSharedFragment: ((SharedFragment) -> Void)? = nil,
         onClose: (() -> Void)? = nil,
         onEndActiveMoment: (() -> Void)? = nil
     ) {
@@ -59,7 +61,9 @@ public struct CaptureView: View {
             initialMode: initialMode,
             activeMoment: activeMoment,
             activeSession: activeSession,
-            onCaptureFragment: onCaptureFragment
+            captureContext: captureContext,
+            onCaptureFragment: onCaptureFragment,
+            onCaptureSharedFragment: onCaptureSharedFragment
         ))
         self.onClose = onClose
         self.onEndActiveMoment = onEndActiveMoment
@@ -198,6 +202,7 @@ public struct CaptureView: View {
                 .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06), lineWidth: 0.8)
         )
     }
+
 
     // MARK: - Active Session Banner with ThinkingOrb
 

@@ -15,6 +15,7 @@ final class ActiveMomentViewModel {
     var selectedFragment: Fragment? = nil
     var showCaptureSheet: Bool = false
     var showEndMomentSheet: Bool = false
+    var showAddPeopleSheet: Bool = false
     var showLimitAlert: Bool = false
     var captureInitialType: FragmentType = .photo
     var orbPulse: Bool = false
@@ -32,7 +33,7 @@ final class ActiveMomentViewModel {
         self.autoOpenEnd = autoOpenEnd
         
         if let initType = initialCaptureType {
-            if (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
+            if !(momentManager.activeSession?.isShared ?? false) && (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
                 self.showLimitAlert = true
             } else {
                 self.showCaptureSheet = true
@@ -59,7 +60,7 @@ final class ActiveMomentViewModel {
     }
     
     func openCaptureSheet(type: FragmentType) {
-        if (session?.fragments.count ?? 0) >= MomentSession.maxFragments {
+        if !(session?.isShared ?? false) && (session?.fragments.count ?? 0) >= MomentSession.maxFragments {
             showLimitAlert = true
             return
         }
@@ -68,11 +69,20 @@ final class ActiveMomentViewModel {
     }
     
     func handleCapturedFragment(_ newFragment: Fragment) {
-        if (session?.fragments.count ?? 0) < MomentSession.maxFragments {
+        guard !(session?.fragments.contains(where: { $0.id == newFragment.id }) ?? false) else {
+            showCaptureSheet = false
+            return
+        }
+        if (session?.isShared ?? false) || (session?.fragments.count ?? 0) < MomentSession.maxFragments {
             momentManager.addFragment(newFragment)
         } else {
             showLimitAlert = true
         }
         showCaptureSheet = false
+    }
+
+    func handleCapturedSharedFragment(_ sharedFragment: SharedFragment) {
+        let frag = sharedFragment.toFragment()
+        handleCapturedFragment(frag)
     }
 }

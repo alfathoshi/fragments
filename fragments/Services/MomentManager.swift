@@ -17,6 +17,8 @@ private struct PersistedSessionInfo: Codable {
     let id: UUID
     let startDate: Date
     let location: String
+    var isShared: Bool?
+    var room: Room?
 }
 
 private let kPersistedSessionKey = "fragments.activeSessionInfo"
@@ -123,7 +125,9 @@ final class MomentManager {
                 id: info.id,
                 startDate: info.startDate,
                 fragments: [],
-                location: info.location
+                location: info.location,
+                isShared: info.isShared ?? false,
+                room: info.room
             )
         }
     }
@@ -192,16 +196,30 @@ final class MomentManager {
         }
     }
 
-    /// Updates color for a saved Moment in local state and SwiftData
-    func updateMomentColor(id: UUID, color: Color?) {
+    /// Updates color for a saved Moment in local state, SwiftData, and RoomManager if shared
+    func updateMomentColor(id: UUID, roomID: String? = nil, color: Color?) {
+        var targetRoomID: String? = roomID
+
         if let index = collections.firstIndex(where: { $0.id == id }) {
             collections[index].color = color
+            if targetRoomID == nil { targetRoomID = collections[index].roomID }
         }
+
         if let ctx = modelContext {
             let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
             if let matching = try? ctx.fetch(descriptor).first {
                 matching.colorRGBAString = color?.toRGBAString()
+                if targetRoomID == nil { targetRoomID = matching.roomID }
                 try? ctx.save()
+            }
+        }
+
+        // Sync with RoomManager if it's a collaborative Room!
+        let resolvedRoomID = targetRoomID ?? (RoomManager.shared.rooms.contains(where: { $0.id == id.uuidString }) ? id.uuidString : nil)
+        if let rID = resolvedRoomID, var room = RoomManager.shared.rooms.first(where: { $0.id == rID }) {
+            room.accentColorHex = color?.toRGBAString()
+            Task {
+                try? await RoomManager.shared.updateRoom(room)
             }
         }
     }
@@ -220,16 +238,31 @@ final class MomentManager {
         }
     }
 
-    /// Deletes a saved Moment from SwiftData and local array
-    func deleteMoment(id: UUID) {
-        collections.removeAll(where: { $0.id == id })
+    /// Deletes a saved Moment from SwiftData, local array, and RoomManager if shared
+    func deleteMoment(id: UUID, roomID: String? = nil) {
+        var targetRoomID: String? = roomID
+
+        if let index = collections.firstIndex(where: { $0.id == id }) {
+            if targetRoomID == nil { targetRoomID = collections[index].roomID }
+            collections.remove(at: index)
+        }
+
         if let ctx = modelContext {
             let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
             if let matchings = try? ctx.fetch(descriptor) {
                 for item in matchings {
+                    if targetRoomID == nil { targetRoomID = item.roomID }
                     ctx.delete(item)
                 }
                 try? ctx.save()
+            }
+        }
+
+        // Also purge from RoomManager and CloudKit if it's a Room!
+        let resolvedRoomID = targetRoomID ?? (RoomManager.shared.rooms.contains(where: { $0.id == id.uuidString }) ? id.uuidString : nil)
+        if let rID = resolvedRoomID, RoomManager.shared.rooms.contains(where: { $0.id == rID }) {
+            Task {
+                try? await RoomManager.shared.deleteRoom(id: rID)
             }
         }
     }
@@ -247,24 +280,70 @@ final class MomentManager {
     }
 
     /// Starts a new Moment recording session
-    func startSession(location: String? = nil) {
+    func startSession(location: String? = nil, isShared: Bool = false, room: Room? = nil) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
-        let newSession = MomentSession(startDate: Date(), fragments: [], location: resolvedLocation)
+        let newSession = MomentSession(
+            startDate: Date(),
+            fragments: [],
+            location: resolvedLocation,
+            isShared: isShared,
+            room: room
+        )
         activeSession = newSession
         persistSession(newSession)
         startLiveActivity(session: newSession)
     }
 
+    /// Starts a new collaborative Shared Moment session instantly with optimistic UI navigation,
+    /// and provisions the CloudKit Room asynchronously in the background.
+    func startSharedSession(location: String? = nil) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
+        let roomName = "Moment in \(resolvedLocation)"
+        let roomId = UUID().uuidString
+
+        let optimisticRoom = Room(
+            id: roomId,
+            name: roomName,
+            emoji: "🌴",
+            createdAt: Date(),
+            createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        )
+
+        // 1. Immediately launch the active session so UI transitions with 0ms latency
+        startSession(location: resolvedLocation, isShared: true, room: optimisticRoom)
+
+        // 2. Asynchronously provision the Room in CloudKit in the background
+        Task {
+            if let provisionedRoom = try? await RoomManager.shared.createRoom(
+                id: roomId,
+                name: roomName,
+                emoji: "🌴"
+            ) {
+                await MainActor.run {
+                    if var current = self.activeSession, current.isShared, current.room?.id == roomId {
+                        current.room = provisionedRoom
+                        self.activeSession = current
+                        self.persistSession(current)
+                    }
+                }
+            }
+        }
+    }
+
     /// Adds a newly captured fragment to the active session (capped at 15 items)
     func addFragment(_ fragment: Fragment) {
         guard var session = activeSession else { return }
-        guard session.fragments.count < MomentSession.maxFragments else { return }
+        guard session.fragments.count < MomentSession.maxFragments || session.isShared else { return }
+        guard !session.fragments.contains(where: { $0.id == fragment.id }) else { return }
         var newFragment = fragment
-        let coords = Fragment.generateScatteredCoordinates(existing: session.fragments)
-        newFragment.phi = coords.phi
-        newFragment.theta = coords.theta
-        newFragment.radiusFactor = coords.radiusFactor
+        if newFragment.phi == 0.0 && newFragment.theta == 0.0 {
+            let coords = Fragment.generateScatteredCoordinates(existing: session.fragments)
+            newFragment.phi = coords.phi
+            newFragment.theta = coords.theta
+            newFragment.radiusFactor = coords.radiusFactor
+        }
 
         session.fragments.append(newFragment)
         activeSession = session
@@ -300,7 +379,9 @@ final class MomentManager {
             location: resolvedLocation,
             date: session.startDate,
             items: folderItems,
-            color: color
+            color: color,
+            isShared: session.isShared,
+            roomID: session.room?.id
         )
 
         withAnimation(.spring(response: 0.42, dampingFraction: 0.76)) {
@@ -316,6 +397,16 @@ final class MomentManager {
             try? ctx.save()
         }
 
+        // If session was shared, also update/save the Room in RoomManager!
+        if session.isShared, var room = session.room {
+            room.name = finalTitle
+            room.accentColorHex = color?.toRGBAString()
+            room.fragmentCount = session.fragments.count
+            Task {
+                try? await RoomManager.shared.updateRoom(room)
+            }
+        }
+
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         clearPersistedSession()
         endLiveActivity()
@@ -325,12 +416,19 @@ final class MomentManager {
     /// Discards the active session without saving
     func cancelSession() {
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        let sessionToCancel = activeSession
         withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
             activeSession = nil
             showEndMomentSheet = false
         }
         clearPersistedSession()
         endLiveActivity()
+
+        if let session = sessionToCancel, session.isShared, let room = session.room {
+            Task {
+                try? await RoomManager.shared.deleteRoom(id: room.id)
+            }
+        }
     }
 
     // MARK: - Session Persistence Helpers
@@ -340,7 +438,9 @@ final class MomentManager {
         let info = PersistedSessionInfo(
             id: session.id,
             startDate: session.startDate,
-            location: session.location
+            location: session.location,
+            isShared: session.isShared,
+            room: session.room
         )
         if let data = try? JSONEncoder().encode(info) {
             UserDefaults.standard.set(data, forKey: kPersistedSessionKey)

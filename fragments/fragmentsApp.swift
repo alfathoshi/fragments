@@ -37,6 +37,35 @@ struct fragmentsApp: App {
         }
     }()
 
+    init() {
+        #if DEBUG
+        let (passed1, logs1) = CloudKitFoundationVerifier.runAllTests()
+        print("=== CLOUDKIT FOUNDATION SELF-VERIFICATION (PHASE 1-3) ===")
+        for log in logs1 {
+            print(log)
+        }
+        print("=== RESULT (PHASE 1-3): \(passed1 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+        let (passed2, logs2) = RoomsPhase4And5Verifier.runAllTests()
+        print("=== ROOMS REPOSITORY & CLOUDKIT INFRASTRUCTURE VERIFICATION (PHASE 4-5) ===")
+        for log in logs2 {
+            print(log)
+        }
+        print("=== RESULT (PHASE 4-5): \(passed2 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+        let (passed3, logs3) = CloudKitCollaborationValidator.runAllTests()
+        print("=== REAL CLOUDKIT COLLABORATION VALIDATION (PHASE 6) ===")
+        for log in logs3 {
+            print(log)
+        }
+        print("=== RESULT (PHASE 6): \(passed3 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+        let allLogs = (logs1 + logs2 + logs3).joined(separator: "\n")
+        let logPath = NSTemporaryDirectory() + "fragments_verification.log"
+        try? allLogs.write(toFile: logPath, atomically: true, encoding: .utf8)
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {

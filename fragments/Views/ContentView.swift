@@ -79,13 +79,11 @@ struct ContentView: View {
             if viewModel.isCaptureMenuOpen {
                 FloatingCaptureOverlay(
                     isOpen: $viewModel.isCaptureMenuOpen,
-                    onSelectStartMoment: {
-                        if viewModel.momentManager.isSessionActive {
-                            viewModel.showResumeOrNewMomentAlert = true
-                        } else {
-                            viewModel.momentManager.startSession()
-                            viewModel.showActiveMomentView = true
-                        }
+                    onSelectStartPersonalMoment: {
+                        viewModel.handleStartPersonalMoment()
+                    },
+                    onSelectStartSharedMoment: {
+                        viewModel.handleStartSharedMoment()
                     },
                     onSelectQuickCaptureType: { type in
                         if viewModel.momentManager.isSessionActive {

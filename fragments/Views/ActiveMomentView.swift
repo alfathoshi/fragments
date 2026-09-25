@@ -85,15 +85,31 @@ struct ActiveMomentView: View {
                     }
 
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            viewModel.showEndMomentSheet = true
-                        } label: {
-                            Text("Save Moment")
-                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                        HStack(spacing: 8) {
+                            if viewModel.session?.isShared == true {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    viewModel.showAddPeopleSheet = true
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "person.badge.plus")
+                                            .font(.system(size: 13, weight: .bold))
+                                    }
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 6)
+                                }
+                            }
+
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                viewModel.showEndMomentSheet = true
+                            } label: {
+                                Text("Save Moment")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                            }
+                            .glassProminentButtonStyle()
+                            .tint(.primary)
                         }
-                        .glassProminentButtonStyle()
-                        .tint(.primary)
                     }
                 }
             }
@@ -129,8 +145,17 @@ struct ActiveMomentView: View {
                     }
                 }(),
                 activeSession: viewModel.momentManager.activeSession,
+                captureContext: {
+                    if let room = viewModel.session?.room, viewModel.session?.isShared == true {
+                        return .room(room)
+                    }
+                    return .personal
+                }(),
                 onCaptureFragment: { newFragment in
                     viewModel.handleCapturedFragment(newFragment)
+                },
+                onCaptureSharedFragment: { sharedFragment in
+                    viewModel.handleCapturedSharedFragment(sharedFragment)
                 },
                 onClose: {
                     viewModel.showCaptureSheet = false
@@ -142,6 +167,12 @@ struct ActiveMomentView: View {
                     }
                 }
             )
+        }
+        // Add People Sheet for Shared Moment
+        .sheet(isPresented: $viewModel.showAddPeopleSheet) {
+            if let room = viewModel.session?.room {
+                RoomMembersSheet(room: room)
+            }
         }
         // Direct Sheet for EndMomentSheet from within ActiveMomentView
         .sheet(isPresented: $viewModel.showEndMomentSheet) {
@@ -193,16 +224,29 @@ struct ActiveMomentView: View {
     private func sessionHeader(session: MomentSession) -> some View {
         HStack(spacing: 12) {
 
-            // Live Elapsed Time
-            HStack(spacing: 5) {
-                Image(systemName: "clock")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+            // Live Elapsed Time + Shared Badge
+            HStack(spacing: 8) {
+                HStack(spacing: 5) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
 
-                TimelineView(.periodic(from: .now, by: 1.0)) { context in
-                    Text(session.formattedElapsed(at: context.date))
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.primary)
+                    TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                        Text(session.formattedElapsed(at: context.date))
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.primary)
+                    }
+                }
+
+                if session.isShared {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Shared")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
                 }
             }
 
@@ -212,11 +256,13 @@ struct ActiveMomentView: View {
             HStack(spacing: 4) {
                 Image(systemName: "square.stack.3d.up.fill")
                     .font(.system(size: 11))
-                    .foregroundStyle(session.isAtCapacity ? .orange : .secondary)
+                    .foregroundStyle(session.isAtCapacity && !session.isShared ? .orange : .secondary)
 
-                Text("\(session.fragmentCount)/\(MomentSession.maxFragments) fragments")
+                Text(session.isShared
+                     ? "\(session.fragmentCount) \(session.fragmentCount == 1 ? "fragment" : "fragments")"
+                     : "\(session.fragmentCount)/\(MomentSession.maxFragments) fragments")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(session.isAtCapacity ? .orange : .primary)
+                    .foregroundStyle(session.isAtCapacity && !session.isShared ? .orange : .primary)
             }
         }
         .padding(.horizontal, 20)
@@ -226,9 +272,11 @@ struct ActiveMomentView: View {
 
     // MARK: - Bottom Floating ThinkingOrb Dock
     private func bottomFloatingOrbDock(session: MomentSession) -> some View {
-        Button {
+        let isFull = session.isAtCapacity && !session.isShared
+
+        return Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            if session.isAtCapacity {
+            if isFull {
                 viewModel.showLimitAlert = true
             } else {
                 viewModel.openCaptureSheet(type: .photo)
@@ -239,20 +287,20 @@ struct ActiveMomentView: View {
                 ThinkingOrb(state: .connecting, size: 48)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.isAtCapacity ? "Limit Reached" : "Capture Fragment")
+                    Text(isFull ? "Limit Reached" : (session.isShared ? "Capture Fragment" : "Capture Fragment"))
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
 
-                    Text(session.isAtCapacity ? "Max 15 fragments reached" : "Tap to add fragments...")
+                    Text(isFull ? "Max 15 fragments reached" :  "Tap to add fragments...")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Image(systemName: session.isAtCapacity ? "exclamationmark.circle.fill" : "plus.circle.fill")
+                Image(systemName: isFull ? "exclamationmark.circle.fill" : "plus.circle.fill")
                     .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(session.isAtCapacity ? .orange : .primary)
+                    .foregroundStyle(isFull ? .orange : .primary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
