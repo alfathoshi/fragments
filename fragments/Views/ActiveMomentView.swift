@@ -83,23 +83,20 @@ struct ActiveMomentView: View {
                                 .foregroundStyle(.primary)
                         }
                     }
-
+                    
                     ToolbarItem(placement: .topBarTrailing) {
-                        HStack(spacing: 8) {
                             if viewModel.session?.isShared == true {
                                 Button {
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                     viewModel.showAddPeopleSheet = true
                                 } label: {
-                                    HStack(spacing: 5) {
-                                        Image(systemName: "person.badge.plus")
-                                            .font(.system(size: 13, weight: .bold))
-                                    }
-                                    .padding(.horizontal, 11)
-                                    .padding(.vertical, 6)
+                                    Image(systemName: "person.badge.plus")
+                                        .font(.system(size: 13, weight: .bold))
                                 }
                             }
+                    }
 
+                    ToolbarItem(placement: .topBarTrailing) {
                             Button {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 viewModel.showEndMomentSheet = true
@@ -109,7 +106,6 @@ struct ActiveMomentView: View {
                             }
                             .glassProminentButtonStyle()
                             .tint(.primary)
-                        }
                     }
                 }
             }

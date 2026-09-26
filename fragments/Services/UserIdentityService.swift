@@ -135,12 +135,21 @@ public final class UserIdentityService {
         } catch {
             self.lastError = error.localizedDescription
 
-            // Offline fallback: retain existing or cached identity if available
+            // Offline/unauthenticated fallback: retain existing or create local device identity
             if let current = currentUserIdentity {
                 return current
             }
 
-            return nil
+            let profileName = ProfileManager.shared.signature
+            let localID = UserDefaults.standard.string(forKey: cachedUserRecordIDKey) ?? "_local_device_user"
+            let fallbackIdentity = UserIdentity(
+                id: localID,
+                displayName: profileName,
+                isCurrentUser: true,
+                lastResolvedAt: Date()
+            )
+            self.currentUserIdentity = fallbackIdentity
+            return fallbackIdentity
         }
     }
 
@@ -172,8 +181,15 @@ public final class UserIdentityService {
             return
         }
 
-        let cachedDisplayName = UserDefaults.standard.string(forKey: cachedUserDisplayNameKey)
+        var cachedDisplayName = UserDefaults.standard.string(forKey: cachedUserDisplayNameKey)
             ?? ProfileManager.shared.signature
+
+        if cachedDisplayName == "Alfathoshi" {
+            cachedDisplayName = ProfileManager.shared.signature
+            if ProfileManager.shared.signature.isEmpty {
+                UserDefaults.standard.removeObject(forKey: cachedUserDisplayNameKey)
+            }
+        }
 
         self.currentUserIdentity = UserIdentity(
             id: cachedID,

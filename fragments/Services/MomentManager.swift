@@ -64,14 +64,14 @@ final class MomentManager {
         if let sdMoments = try? ctx.fetch(momentDescriptor) {
             // Remove any leftover sample data previously seeded
             var hasDeletedSample = false
-            for sdMoment in sdMoments where sdMoment.name == "Sanur Beach" {
+            for sdMoment in sdMoments where sdMoment.name == "Sanur Beach" || sdMoment.name == "Bali Trip 2026" {
                 ctx.delete(sdMoment)
                 hasDeletedSample = true
             }
             if hasDeletedSample {
                 try? ctx.save()
             }
-            let validMoments = sdMoments.filter { $0.name != "Sanur Beach" }
+            let validMoments = sdMoments.filter { $0.name != "Sanur Beach" && $0.name != "Bali Trip 2026" }
             self.collections = validMoments.map { $0.toFolderCollection() }
         }
         

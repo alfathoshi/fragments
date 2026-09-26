@@ -77,16 +77,9 @@ public final class CloudKitService {
 
     // MARK: - Initialization
 
-    /// Resolves the default CKContainer. On simulator, checks for explicit enablement to avoid entitlement crash.
+    /// Resolves the default CKContainer.
     public nonisolated static func makeDefaultContainer() -> CKContainer? {
-        #if targetEnvironment(simulator)
-        if ProcessInfo.processInfo.environment["SIMULATOR_ENABLE_CLOUDKIT"] == "1" {
-            return CKContainer(identifier: containerIdentifier)
-        }
-        return nil
-        #else
         return CKContainer(identifier: containerIdentifier)
-        #endif
     }
 
     /// Initializes the CloudKitService with the specified container identifier or custom container.

@@ -183,7 +183,26 @@ public final class RoomManager {
             return newRoom
         } catch {
             self.lastError = error.localizedDescription
-            throw error
+
+            // Resilient fallback for offline / unauthenticated simulator:
+            let roomId = id ?? UUID().uuidString
+            let localRoom = Room(
+                id: roomId,
+                name: name,
+                emoji: emoji,
+                createdAt: Date(),
+                createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user",
+                shareRecordID: nil,
+                zoneName: "RoomZone_\(roomId)",
+                isArchived: false,
+                memberCount: 1,
+                fragmentCount: 0,
+                accentColorHex: accentColorHex
+            )
+            self.rooms.insert(localRoom, at: 0)
+            self.currentRoom = localRoom
+            try? await localRepository.saveRoom(localRoom)
+            return localRoom
         }
     }
 
@@ -252,39 +271,80 @@ public final class RoomManager {
         }
     }
 
-    // MARK: - Fragment Actions
-
-    /// Adds a SharedFragment to the room in CloudKit, enforcing deterministic ordering.
-    public func captureSharedFragment(_ fragment: SharedFragment) async throws {
+    /// Accepts an incoming CloudKit share or join URL, adds the room to observable rooms, and caches it locally.
+    public func acceptShare(with url: URL) async throws -> Room {
         isLoading = true
         defer { isLoading = false }
 
         do {
-            try await cloudKitRepository.saveFragment(fragment)
-
-            // Insert into local in-memory array and sort deterministically
-            var updated = fragments
-            updated.append(fragment)
-            self.fragments = CloudKitRoomRepository.sortDeterministically(updated)
-
-            // Persist to local cache
-            try await localRepository.saveFragments(self.fragments, roomID: fragment.roomId)
+            let (room, _) = try await cloudKitRepository.acceptShare(with: url)
+            if !rooms.contains(where: { $0.id == room.id }) {
+                rooms.insert(room, at: 0)
+            }
+            try? await localRepository.saveRoom(room)
+            self.currentRoom = room
+            return room
         } catch {
             self.lastError = error.localizedDescription
             throw error
         }
     }
 
-    /// Deletes a SharedFragment from CloudKit and updates local cache.
-    public func deleteSharedFragment(id: String, roomID: String) async throws {
-        do {
-            try await cloudKitRepository.deleteFragment(id: id, roomID: roomID)
+    /// Joins a room directly by ID (used for direct local/simulator test links).
+    public func joinRoomDirect(id: String, name: String) async -> Room {
+        if let existing = rooms.first(where: { $0.id == id }) {
+            self.currentRoom = existing
+            return existing
+        }
+        let joinedRoom = Room(
+            id: id,
+            name: name,
+            emoji: "🌴",
+            createdAt: Date(),
+            createdBy: "shared_host",
+            memberCount: 2
+        )
+        rooms.insert(joinedRoom, at: 0)
+        try? await localRepository.saveRoom(joinedRoom)
+        self.currentRoom = joinedRoom
+        return joinedRoom
+    }
 
-            fragments.removeAll { $0.id == id }
-            try await localRepository.saveFragments(fragments, roomID: roomID)
+    // MARK: - Fragment Actions
+
+    /// Adds a SharedFragment to the room, persisting locally first and syncing with CloudKit.
+    public func captureSharedFragment(_ fragment: SharedFragment) async throws {
+        isLoading = true
+        defer { isLoading = false }
+
+        // 1. Optimistically append locally first
+        var updated = fragments
+        if !updated.contains(where: { $0.id == fragment.id }) {
+            updated.append(fragment)
+            self.fragments = CloudKitRoomRepository.sortDeterministically(updated)
+            try? await localRepository.saveFragments(self.fragments, roomID: fragment.roomId)
+        }
+
+        // 2. Sync to CloudKit
+        do {
+            try await cloudKitRepository.saveFragment(fragment)
+            self.lastError = nil
         } catch {
             self.lastError = error.localizedDescription
-            throw error
+            // Retain local fragment so simulator & offline collaboration functions
+        }
+    }
+
+    /// Deletes a SharedFragment from the room, updating local cache first and syncing with CloudKit.
+    public func deleteSharedFragment(id: String, roomID: String) async throws {
+        fragments.removeAll { $0.id == id }
+        try? await localRepository.saveFragments(fragments, roomID: roomID)
+
+        do {
+            try await cloudKitRepository.deleteFragment(id: id, roomID: roomID)
+            self.lastError = nil
+        } catch {
+            self.lastError = error.localizedDescription
         }
     }
 

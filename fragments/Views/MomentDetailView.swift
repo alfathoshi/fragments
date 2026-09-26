@@ -649,11 +649,11 @@ public struct MomentDetailView: View {
                 .foregroundStyle(Color.secondary.opacity(0.6))
 
             VStack(spacing: 6) {
-                Text("No Fragments Yet")
+                Text("No fragments yet")
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.primary)
 
-                Text("Add fragments to this moment to view them as widgets")
+                Text("Add fragments to this moment")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(Color.secondary)
                     .multilineTextAlignment(.center)

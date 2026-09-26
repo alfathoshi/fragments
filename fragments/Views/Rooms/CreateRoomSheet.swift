@@ -61,7 +61,7 @@ public struct CreateRoomSheet: View {
                                 .font(.system(size: 30))
                         }
 
-                        TextField("Room Name (e.g. Bali Trip 2026)", text: $name)
+                        TextField("Room Name (e.g. Summer Vacation)", text: $name)
                             .font(.system(size: 17, weight: .semibold, design: .rounded))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 14)

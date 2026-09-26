@@ -579,13 +579,6 @@ public struct FragmentDetailView: View {
 
             // Metadata Row (Timestamp, 24h Expiration, & Location)
             HStack(spacing: 12) {
-                HStack(spacing: 5) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 12))
-                    Text(fragment.formattedTimestamp)
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(.secondary)
 
                 HStack(spacing: 4) {
                     Image(systemName: "hourglass")

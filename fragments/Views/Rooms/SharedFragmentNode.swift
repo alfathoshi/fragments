@@ -50,15 +50,17 @@ public struct SharedFragmentNode: View {
                         .lineLimit(1)
 
                     // Subtle Author Attribution
-                    HStack(spacing: 4) {
-                        Text("•")
-                            .foregroundStyle(resolvedColor)
-                            .font(.system(size: 12, weight: .bold))
+                    if !fragment.authorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        HStack(spacing: 4) {
+                            Text("•")
+                                .foregroundStyle(resolvedColor)
+                                .font(.system(size: 12, weight: .bold))
 
-                        Text(fragment.authorName)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            Text(fragment.authorName)
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 .padding(.horizontal, 4)

@@ -94,16 +94,18 @@ public struct RoomDetailView: View {
                             .foregroundStyle(.primary)
                     }
 
-                    // Native Share button
-                    if let _ = activeShare {
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    // Share / Invite button
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if let share = activeShare, share.url != nil {
                             showCloudShareSheet = true
-                        } label: {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(accentColor)
+                        } else {
+                            showMembersSheet = true
                         }
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(accentColor)
                     }
                 }
             }
@@ -116,7 +118,11 @@ public struct RoomDetailView: View {
         }
         .sheet(isPresented: $showCloudShareSheet) {
             if let share = activeShare {
-                CloudSharingSheet(share: share)
+                CloudSharingSheet(share: share) {
+                    Task {
+                        await roomManager.loadRoomDetails(roomID: room.id)
+                    }
+                }
             }
         }
         .fullScreenCover(isPresented: $showCaptureSheet) {
@@ -132,7 +138,7 @@ public struct RoomDetailView: View {
         .task {
             roomManager.currentRoom = room
             await roomManager.loadRoomDetails(roomID: room.id)
-            if let share = try? await CloudKitRoomRepository.shared.fetchShare(for: room) {
+            if let share = try? await CloudKitRoomRepository.shared.getOrCreateShare(for: room) {
                 self.activeShare = share
             }
         }

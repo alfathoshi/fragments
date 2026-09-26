@@ -94,28 +94,6 @@ struct MomentsView: View {
             }
         }
 
-        #if DEBUG
-        // In debug, if there's no shared moment in store yet, include a sample shared moment to showcase the person.2.fill badge
-        if !UserDefaults.standard.bool(forKey: "hasDeletedSampleSharedMoment") && !result.contains(where: { $0.isShared }) {
-            let savedColorHex = UserDefaults.standard.string(forKey: "sampleSharedMomentColor")
-            let color = savedColorHex != nil ? Color.fromRGBAString(savedColorHex!) : Color(red: 0.15, green: 0.55, blue: 0.98)
-            let sampleShared = FolderCollection(
-                id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
-                name: "Bali Trip 2026",
-                location: "Canggu, Bali",
-                date: Date(),
-                items: [
-                    FolderItem(title: "Beach Club", subtitle: "With Sarah & Bintang", systemImage: "camera.fill"),
-                    FolderItem(title: "Sunset Vibes", subtitle: "Golden skies", systemImage: "sun.max.fill")
-                ],
-                color: color,
-                isShared: true,
-                roomID: "sample-room-bali"
-            )
-            result.insert(sampleShared, at: 0)
-        }
-        #endif
-
         return result.sorted { $0.date > $1.date }
     }
 
@@ -155,19 +133,9 @@ struct MomentsView: View {
                     FolderDetailBottomSheet(
                         collection: collection,
                         onUpdateColor: { newColor in
-                            #if DEBUG
-                            if collection.roomID == "sample-room-bali" || collection.id == UUID(uuidString: "11111111-2222-3333-4444-555555555555") {
-                                UserDefaults.standard.set(newColor?.toRGBAString(), forKey: "sampleSharedMomentColor")
-                            }
-                            #endif
                             viewModel.momentManager.updateMomentColor(id: collection.id, roomID: collection.roomID, color: newColor)
                         },
                         onDelete: {
-                            #if DEBUG
-                            if collection.roomID == "sample-room-bali" || collection.id == UUID(uuidString: "11111111-2222-3333-4444-555555555555") {
-                                UserDefaults.standard.set(true, forKey: "hasDeletedSampleSharedMoment")
-                            }
-                            #endif
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
                                 viewModel.momentManager.deleteMoment(id: collection.id, roomID: collection.roomID)
                             }
@@ -314,7 +282,7 @@ struct MomentsView: View {
 
             // Copy
             VStack(spacing: 8) {
-                Text("No Moments Yet")
+                Text("No moments yet")
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
 
@@ -388,21 +356,21 @@ public struct FolderDetailBottomSheet: View {
                         VStack(spacing: 14) {
                             metadataRow(
                                 icon: "square.stack.3d.up.fill",
-                                iconColor: .blue,
+                                iconColor: .primary,
                                 title: "Fragments Count",
                                 value: collection.fragmentCountText
                             )
 
                             metadataRow(
                                 icon: "mappin.and.ellipse",
-                                iconColor: .red,
+                                iconColor: .primary,
                                 title: "Location",
                                 value: collection.location
                             )
 
                             metadataRow(
                                 icon: "calendar.badge.clock",
-                                iconColor: .orange,
+                                iconColor: .primary,
                                 title: "Time & Date",
                                 value: collection.formattedDateTime
                             )

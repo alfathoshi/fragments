@@ -18,6 +18,9 @@ public struct RoomMembersSheet: View {
     @State private var members: [RoomMember] = []
     @State private var activeShare: CKShare? = nil
     @State private var isShowingShareSheet: Bool = false
+    @State private var isShowingFallbackShareSheet: Bool = false
+    @State private var isPreparingShare: Bool = false
+    @State private var copiedLink: Bool = false
     @State private var isLoading: Bool = true
     @State private var errorMessage: String? = nil
 
@@ -45,7 +48,7 @@ public struct RoomMembersSheet: View {
                                 .font(.system(size: 18, weight: .bold, design: .rounded))
                                 .foregroundStyle(.primary)
 
-                            Text("\(members.count) \(members.count == 1 ? "participant" : "participants") in this private space")
+                            Text("\(members.count) \(members.count == 1 ? "participant" : "participants") in this moment")
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
@@ -73,28 +76,28 @@ public struct RoomMembersSheet: View {
                     }
                 }
 
-                // Native Invitation Section
+                // Invitation Section
                 Section {
                     Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        isShowingShareSheet = true
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        isShowingFallbackShareSheet = true
                     } label: {
                         HStack {
-                            Label("Invite People", systemImage: "person.badge.plus")
+                            Label("Share Link via...", systemImage: "square.and.arrow.up")
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Color.purple)
 
                             Spacer()
 
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.tertiary)
                         }
                         .padding(.vertical, 4)
                     }
-                    .disabled(activeShare == nil)
+                } header: {
+                    Text("Invite & Share")
                 } footer: {
-                    Text("Invitations use Apple's native private iCloud sharing. Only people you invite can view or capture fragments.")
+                    Text("Share the invite link to collaborate in real-time.")
                         .font(.system(size: 12))
                 }
             }
@@ -114,6 +117,10 @@ public struct RoomMembersSheet: View {
                     }
                 }
             }
+            .sheet(isPresented: $isShowingFallbackShareSheet) {
+                let shareText = activeShare?.url?.absoluteString ?? "fragments://room/join?id=\(room.id)&name=\(room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+                ShareSheet(activityItems: [shareText])
+            }
             .task {
                 await loadData()
             }
@@ -127,12 +134,11 @@ public struct RoomMembersSheet: View {
             // Avatar Circle
             ZStack {
                 Circle()
-                    .fill(Color.purple.opacity(0.15))
+                    .fill(.primary.opacity(0.15))
                     .frame(width: 38, height: 38)
 
                 Text(member.displayName.prefix(1).uppercased())
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.purple)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -158,23 +164,65 @@ public struct RoomMembersSheet: View {
             // Role Badge
             Text(member.role.displayName)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(member.role == .owner ? Color.purple : Color.secondary)
+                .foregroundStyle(member.role == .owner ? Color.blue : Color.secondary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(member.role == .owner ? Color.purple.opacity(0.12) : Color.primary.opacity(0.06))
+                        .fill(member.role == .owner ? Color.blue.opacity(0.12) : Color.primary.opacity(0.06))
                 )
         }
         .padding(.vertical, 3)
+    }
+
+    private func handleInviteTapped() {
+        if let share = activeShare, share.url != nil {
+            isShowingShareSheet = true
+            return
+        }
+
+        isPreparingShare = true
+        Task {
+            let share = try? await roomRepo.getOrCreateShare(for: room)
+            await MainActor.run {
+                self.isPreparingShare = false
+                if let share = share, share.url != nil {
+                    self.activeShare = share
+                    self.isShowingShareSheet = true
+                } else {
+                    // CloudKit share URL not yet generated (e.g. unauthenticated simulator)
+                    // Fallback to presenting the system share sheet with direct room URL
+                    self.activeShare = share
+                    self.isShowingFallbackShareSheet = true
+                }
+            }
+        }
+    }
+
+    private func handleCopyLink() {
+        let linkToCopy: String
+        if let url = activeShare?.url?.absoluteString {
+            linkToCopy = url
+        } else {
+            linkToCopy = "fragments://room/join?id=\(room.id)&name=\(room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        }
+        UIPasteboard.general.string = linkToCopy
+        withAnimation(.easeInOut(duration: 0.2)) {
+            copiedLink = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                copiedLink = false
+            }
+        }
     }
 
     private func loadData() async {
         isLoading = true
         defer { isLoading = false }
 
-        // 1. Fetch live share
-        if let share = try? await roomRepo.fetchShare(for: room) {
+        // 1. Fetch live share (or provision if not yet created)
+        if let share = try? await roomRepo.getOrCreateShare(for: room) {
             self.activeShare = share
         }
 
@@ -184,7 +232,24 @@ public struct RoomMembersSheet: View {
             self.members = fetched
         } else {
             // Fallback to local cache
-            self.members = (try? LocalRoomCache.shared.loadMembers(roomID: room.id)) ?? []
+            let cached = (try? LocalRoomCache.shared.loadMembers(roomID: room.id)) ?? []
+            if !cached.isEmpty {
+                self.members = cached
+            } else {
+                // Ensure owner is at least displayed
+                let currentId = identityService.currentUserIdentity?.id ?? "local_user"
+                let currentName = identityService.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+                self.members = [
+                    RoomMember(
+                        id: "owner_\(room.id)",
+                        roomId: room.id,
+                        userId: currentId,
+                        displayName: currentName,
+                        role: .owner,
+                        joinedAt: room.createdAt
+                    )
+                ]
+            }
         }
     }
 }

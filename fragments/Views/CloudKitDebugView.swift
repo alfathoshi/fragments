@@ -20,7 +20,7 @@ public struct CloudKitDebugView: View {
     @State private var activeShare: CKShare? = nil
     @State private var isShowingShareSheet: Bool = false
 
-    @State private var newRoomName: String = "Bali Trip 2026"
+    @State private var newRoomName: String = "New Shared Room"
     @State private var newRoomEmoji: String = "🌴"
     @State private var invitationURLText: String = ""
 

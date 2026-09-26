@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import UIKit
+import Darwin
 
 /// Glass effect style options that map to native iOS 26+ `Glass` configurations,
 /// with graceful fallback on earlier iOS versions (iOS 18+).
@@ -164,5 +166,47 @@ extension View {
                 self.background(.ultraThinMaterial.opacity(0.6), in: shape)
             }
         }
+    }
+}
+
+// MARK: - Device & Layout Helpers
+
+public enum DeviceLayout {
+    /// Detects whether the current device is iPhone Duo (foldable) in either single-screen or dual-screen mode.
+    public static var isIPhoneDuo: Bool {
+        #if targetEnvironment(simulator)
+        if let simName = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"],
+           simName.localizedCaseInsensitiveContains("Duo") {
+            return true
+        }
+        if let simModel = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"],
+           simModel.localizedCaseInsensitiveContains("iPhone19,4") {
+            return true
+        }
+        #endif
+
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machineMirror = Mirror(reflecting: systemInfo.machine)
+        let identifier = machineMirror.children.reduce("") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return identifier }
+            return identifier + String(UnicodeScalar(UInt8(value)))
+        }
+
+        if identifier.contains("iPhone19,4") || identifier.localizedCaseInsensitiveContains("Duo") {
+            return true
+        }
+
+        if UIDevice.current.name.localizedCaseInsensitiveContains("Duo") {
+            return true
+        }
+
+        return false
+    }
+
+    /// Determines whether the tab navigation rail is positioned on the trailing side rather than the bottom.
+    /// This is true for iPhone Duo in all screen configurations (single or dual screen), or when horizontal size class is regular (e.g. iPad).
+    public static func hasTrailingTabBar(horizontalSizeClass: UserInterfaceSizeClass?) -> Bool {
+        isIPhoneDuo || horizontalSizeClass == .regular
     }
 }

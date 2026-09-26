@@ -14,7 +14,7 @@ import Observation
 public final class ProfileManager {
     public static let shared = ProfileManager()
 
-    public var signature: String = "Alfathoshi"
+    public var signature: String = ""
     public var avatarImage: UIImage? = nil
 
     private let signatureKey = "profile_signature"
@@ -29,10 +29,16 @@ public final class ProfileManager {
 
     public func loadSavedData() {
         // Load signature/name
-        if let savedSignature = UserDefaults.standard.string(forKey: signatureKey), !savedSignature.isEmpty {
-            self.signature = savedSignature
+        if let savedSignature = UserDefaults.standard.string(forKey: signatureKey) {
+            // Clean up any legacy default "Alfathoshi"
+            if savedSignature == "Alfathoshi" {
+                self.signature = ""
+                UserDefaults.standard.removeObject(forKey: signatureKey)
+            } else {
+                self.signature = savedSignature
+            }
         } else {
-            self.signature = "Alfathoshi"
+            self.signature = ""
         }
 
         // Load avatar image from disk
@@ -45,9 +51,12 @@ public final class ProfileManager {
 
     public func updateSignature(_ newSignature: String) {
         let trimmed = newSignature.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalValue = trimmed.isEmpty ? "Alfathoshi" : trimmed
-        self.signature = finalValue
-        UserDefaults.standard.set(finalValue, forKey: signatureKey)
+        self.signature = trimmed
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: signatureKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: signatureKey)
+        }
     }
 
     public func updateAvatar(image: UIImage, data: Data) {

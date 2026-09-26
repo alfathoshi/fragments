@@ -27,10 +27,10 @@ public struct CloudSharingSheet: UIViewControllerRepresentable {
     }
 
     public func makeUIViewController(context: Context) -> UIViewController {
-        guard let container else {
+        guard let container, share.url != nil else {
             let alert = UIAlertController(
-                title: "Sharing Unavailable",
-                message: "iCloud sharing requires an active Apple Account on a physical device.",
+                title: "iCloud Link Unavailable",
+                message: "iCloud sharing requires an active Apple Account signed in via iOS Settings. If testing on a simulator, use 'Copy Invite Link' or 'Share Link via...' to connect devices.",
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in

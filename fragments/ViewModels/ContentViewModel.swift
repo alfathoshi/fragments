@@ -75,6 +75,20 @@ final class ContentViewModel {
     }
 
     func handleDeepLink(_ url: URL) {
+        if url.scheme == "https" && url.host?.contains("icloud.com") == true {
+            Task {
+                if let _ = try? await RoomManager.shared.acceptShare(with: url) {
+                    await MainActor.run {
+                        withAnimation {
+                            selectedTab = .logs
+                            activeTab = .logs
+                        }
+                    }
+                }
+            }
+            return
+        }
+
         guard url.scheme == "fragments" else { return }
 
         // Close any standalone detail views or menus that might block presentation
@@ -141,6 +155,19 @@ final class ContentViewModel {
                 withAnimation {
                     selectedTab = .fragments
                     activeTab = .fragments
+                }
+            }
+        } else if url.host == "room" || url.host == "join" {
+            let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+            let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? UUID().uuidString
+            let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
+            Task {
+                _ = await RoomManager.shared.joinRoomDirect(id: roomId, name: roomName)
+                await MainActor.run {
+                    withAnimation {
+                        selectedTab = .logs
+                        activeTab = .logs
+                    }
                 }
             }
         }

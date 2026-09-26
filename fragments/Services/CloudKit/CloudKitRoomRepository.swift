@@ -140,7 +140,7 @@ public final class CloudKitRoomRepository: Sendable {
         let share = CKShare(rootRecord: roomRecord)
         share[CKShare.SystemFieldKey.title] = name as CKRecordValue
         share[CKShare.SystemFieldKey.shareType] = "com.alfathoshi.fragments.room" as CKRecordValue
-        share.publicPermission = .none // Private invitation only
+        share.publicPermission = .readWrite // Allow anyone with link to collaborate
 
         // 5. Create initial RoomMember record for owner
         let ownerMember = RoomMember(
@@ -157,9 +157,16 @@ public final class CloudKitRoomRepository: Sendable {
         }
 
         // 6. Save roomRecord, share, and memberRecord atomically
+        var savedShare = share
         let operation = CKModifyRecordsOperation(recordsToSave: [roomRecord, share, ownerMemberRecord], recordIDsToDelete: nil)
         operation.savePolicy = .allKeys
         operation.isAtomic = true
+
+        operation.perRecordSaveBlock = { _, result in
+            if case .success(let record) = result, let serverShare = record as? CKShare {
+                savedShare = serverShare
+            }
+        }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             operation.modifyRecordsResultBlock = { result in
@@ -174,9 +181,9 @@ public final class CloudKitRoomRepository: Sendable {
         }
 
         // 7. Update room with share record identifier
-        room.shareRecordID = share.recordID.recordName
+        room.shareRecordID = savedShare.recordID.recordName
 
-        return (room, share)
+        return (room, savedShare)
     }
 
     /// Fetches a Room record by its ID, checking `privateDatabase` first, then `sharedDatabase`.
@@ -347,6 +354,27 @@ public final class CloudKitRoomRepository: Sendable {
 
         let shareRecordID = CKRecord.ID(recordName: shareName, zoneID: zone)
         return try? await privateDB.record(for: shareRecordID) as? CKShare
+    }
+
+    /// Retrieves an existing `CKShare` for a Room, or attempts to provision it if not yet created.
+    public func getOrCreateShare(for room: Room) async throws -> CKShare? {
+        if let existing = try await fetchShare(for: room) {
+            return existing
+        }
+
+        // If not found yet (e.g. background provisioning still in flight), try creating the room/share
+        do {
+            let (_, share) = try await createRoom(
+                id: room.id,
+                name: room.name,
+                emoji: room.emoji,
+                accentColorHex: room.accentColorHex
+            )
+            return share
+        } catch {
+            // Re-check once in case background task created it concurrently
+            return try? await fetchShare(for: room)
+        }
     }
 
     /// Fetches the live list of CKShare participants (the cryptographic source of truth for authorization).

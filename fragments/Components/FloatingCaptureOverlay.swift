@@ -14,6 +14,7 @@ public enum CaptureMenuStage {
 }
 
 public struct FloatingCaptureOverlay: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding public var isOpen: Bool
     @State private var stage: CaptureMenuStage = .primary
     @State private var isExpanded: Bool = false
@@ -99,8 +100,8 @@ public struct FloatingCaptureOverlay: View {
             .scaleEffect(isExpanded ? 1.0 : 0.05, anchor: .bottomTrailing)
             .offset(x: isExpanded ? 0 : 15, y: isExpanded ? 0 : 25)
             .opacity(isExpanded ? 1.0 : 0.0)
-            .padding(.trailing, 27)
-            .padding(.bottom, 72) // Positioned directly over the trailing tab button
+            .padding(.trailing, DeviceLayout.hasTrailingTabBar(horizontalSizeClass: horizontalSizeClass) ? 16 : 27)
+            .padding(.bottom, DeviceLayout.hasTrailingTabBar(horizontalSizeClass: horizontalSizeClass) ? 8 : 72) // Positioned directly over/next to the capture button
         }
         .animation(.spring(response: 0.38, dampingFraction: 0.70), value: isExpanded)
         .animation(.spring(response: 0.34, dampingFraction: 0.72), value: stage)

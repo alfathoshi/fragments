@@ -27,19 +27,26 @@ public struct SharedFragmentDetailView: View {
                     contentHeaderCanvas
 
                     // Author Attribution Pill
+                    let displayName = fragment.authorName.trimmingCharacters(in: .whitespacesAndNewlines)
                     HStack(spacing: 10) {
                         ZStack {
                             Circle()
                                 .fill(Color.purple.opacity(0.18))
                                 .frame(width: 34, height: 34)
 
-                            Text(fragment.authorName.prefix(1).uppercased())
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundStyle(Color.purple)
+                            if displayName.isEmpty {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(Color.purple)
+                            } else {
+                                Text(displayName.prefix(1).uppercased())
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundStyle(Color.purple)
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Captured by \(fragment.authorName)")
+                            Text(displayName.isEmpty ? "Shared Fragment" : "Captured by \(displayName)")
                                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                                 .foregroundStyle(.primary)
 

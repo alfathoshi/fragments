@@ -16,6 +16,7 @@ enum AppTab: Hashable {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var viewModel = ContentViewModel()
 
     var body: some View {
@@ -71,7 +72,7 @@ struct ContentView: View {
             if viewModel.momentManager.isSessionActive && !viewModel.showActiveMomentView && viewModel.selectedTab != .capture && viewModel.selectedFragment == nil {
                 activeSessionFloatingIsland
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 64)
+                    .padding(.bottom, DeviceLayout.hasTrailingTabBar(horizontalSizeClass: horizontalSizeClass) ? 8 : 64)
                     .zIndex(40)
             }
 
@@ -311,6 +312,7 @@ struct ContentView: View {
                     .padding(.vertical, 12)
                 }
                 .floatingDockButtonStyle()
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 20)
             }
         }

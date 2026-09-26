@@ -172,24 +172,25 @@ public struct ProfileView: View {
             .accessibilityLabel("Change Profile Picture")
 
             // Signature (Username) - Single Field
-            HStack(spacing: 8) {
-                Text(profileManager.signature)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
+            Button {
+                editSignatureText = profileManager.signature
+                isEditingProfile = true
+            } label: {
+                HStack(spacing: 8) {
+                    Text(profileManager.signature.isEmpty ? "Add Signature" : profileManager.signature)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(profileManager.signature.isEmpty ? .secondary : .primary)
+                        .multilineTextAlignment(.center)
 
-                Button {
-                    editSignatureText = profileManager.signature
-                    isEditingProfile = true
-                } label: {
                     Image(systemName: "pencil")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .padding(6)
                         .background(Color.primary.opacity(0.06), in: Circle())
                 }
-                .accessibilityLabel("Edit Signature")
             }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel(profileManager.signature.isEmpty ? "Add Signature" : "Edit Signature: \(profileManager.signature)")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -383,6 +384,7 @@ public struct ProfileView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         profileManager.updateSignature(editSignatureText)
+                        UserIdentityService.shared.syncDisplayNameWithProfile()
                         isEditingProfile = false
                         triggerHaptic()
                     }
