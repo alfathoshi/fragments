@@ -90,16 +90,13 @@ public final class UserIdentityService {
         isResolving = true
         defer { isResolving = false }
 
+        let effectiveName = ProfileManager.shared.effectiveName
+
         guard let container = cloudKitService.container else {
-            // Container unavailable (e.g. unprovisioned simulator): maintain cached or local identity
-            if let current = currentUserIdentity {
-                return current
-            }
-            let profileName = ProfileManager.shared.signature
-            let localID = UserDefaults.standard.string(forKey: cachedUserRecordIDKey) ?? "_local_device_user"
+            let localID = getOrCreateLocalDeviceID()
             let identity = UserIdentity(
                 id: localID,
-                displayName: profileName,
+                displayName: effectiveName,
                 isCurrentUser: true,
                 lastResolvedAt: Date()
             )
@@ -110,16 +107,15 @@ public final class UserIdentityService {
         do {
             let recordID = try await container.userRecordID()
             let recordName = recordID.recordName
-            let displayName = ProfileManager.shared.signature
 
             // Check if identity changed (e.g., switched iCloud accounts)
-            if let existing = currentUserIdentity, existing.id != recordName {
+            if let existing = currentUserIdentity, existing.id != recordName && !existing.id.hasPrefix("device_") {
                 clearIdentityCache()
             }
 
             let identity = UserIdentity(
                 id: recordName,
-                displayName: displayName,
+                displayName: effectiveName,
                 isCurrentUser: true,
                 lastResolvedAt: Date()
             )
@@ -129,22 +125,16 @@ public final class UserIdentityService {
 
             // Persist to local cache for instant offline retrieval
             UserDefaults.standard.set(recordName, forKey: cachedUserRecordIDKey)
-            UserDefaults.standard.set(displayName, forKey: cachedUserDisplayNameKey)
+            UserDefaults.standard.set(effectiveName, forKey: cachedUserDisplayNameKey)
 
             return identity
         } catch {
             self.lastError = error.localizedDescription
 
-            // Offline/unauthenticated fallback: retain existing or create local device identity
-            if let current = currentUserIdentity {
-                return current
-            }
-
-            let profileName = ProfileManager.shared.signature
-            let localID = UserDefaults.standard.string(forKey: cachedUserRecordIDKey) ?? "_local_device_user"
+            let localID = getOrCreateLocalDeviceID()
             let fallbackIdentity = UserIdentity(
                 id: localID,
-                displayName: profileName,
+                displayName: effectiveName,
                 isCurrentUser: true,
                 lastResolvedAt: Date()
             )
@@ -214,5 +204,16 @@ public final class UserIdentityService {
         // Re-check account status & re-resolve identity
         await cloudKitService.checkAccountStatus()
         await resolveUserIdentity()
+    }
+
+    /// Returns a stable, locally-persisted device identifier for offline fallback.
+    private func getOrCreateLocalDeviceID() -> String {
+        let key = "fragments_local_device_id"
+        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty {
+            return existing
+        }
+        let newID = "device_\(UUID().uuidString)"
+        UserDefaults.standard.set(newID, forKey: key)
+        return newID
     }
 }

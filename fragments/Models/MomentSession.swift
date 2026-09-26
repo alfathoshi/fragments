@@ -15,6 +15,7 @@ public struct MomentSession: Identifiable, Hashable {
     public var location: String
     public var isShared: Bool
     public var room: Room?
+    public var isHost: Bool
 
     public init(
         id: UUID = UUID(),
@@ -22,7 +23,8 @@ public struct MomentSession: Identifiable, Hashable {
         fragments: [Fragment] = [],
         location: String? = nil,
         isShared: Bool = false,
-        room: Room? = nil
+        room: Room? = nil,
+        isHost: Bool = true
     ) {
         self.id = id
         self.startDate = startDate
@@ -30,6 +32,7 @@ public struct MomentSession: Identifiable, Hashable {
         self.location = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
         self.isShared = isShared
         self.room = room
+        self.isHost = isHost
     }
 
     public var fragmentCount: Int {

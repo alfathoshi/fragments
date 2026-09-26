@@ -13,6 +13,9 @@ public enum RoomRole: String, Codable, Sendable, CaseIterable {
     case member
     case viewer
 
+    /// Alias for member
+    public static let editor: RoomRole = .member
+
     public var displayName: String {
         switch self {
         case .owner: return "Owner"

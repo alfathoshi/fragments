@@ -12,6 +12,8 @@ struct ActiveMomentView: View {
     var onSaveComplete: () -> Void
 
     @State private var viewModel: ActiveMomentViewModel
+    @State private var copiedCodeFeedback: Bool = false
+    @State private var showLeaveConfirmation: Bool = false
     @Environment(\.colorScheme) private var colorScheme
 
     init(
@@ -97,6 +99,7 @@ struct ActiveMomentView: View {
                     }
 
                     ToolbarItem(placement: .topBarTrailing) {
+                        if viewModel.isHost {
                             Button {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 viewModel.showEndMomentSheet = true
@@ -106,6 +109,17 @@ struct ActiveMomentView: View {
                             }
                             .glassProminentButtonStyle()
                             .tint(.primary)
+                        } else {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                showLeaveConfirmation = true
+                            } label: {
+                                Text("Leave Moment")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                            }
+                            .glassProminentButtonStyle()
+                            .tint(.red)
+                        }
                     }
                 }
             }
@@ -214,36 +228,75 @@ struct ActiveMomentView: View {
         } message: {
             Text("A moment can contain a maximum of 15 fragments. You have reached the limit for this moment.")
         }
+        .alert(
+            "Leave Moment?",
+            isPresented: $showLeaveConfirmation
+        ) {
+            Button("Cancel", role: .cancel) { }
+            Button("Leave", role: .destructive) {
+                viewModel.leaveSession()
+                onDismiss()
+            }
+        } message: {
+            Text("Are you sure you want to leave this shared moment? The host can continue and save the moment.")
+        }
+        .onChange(of: viewModel.momentManager.activeSession == nil) { _, isNil in
+            if isNil {
+                onDismiss()
+            }
+        }
+        .onAppear {
+            viewModel.startSyncObserver()
+        }
+        .onDisappear {
+            viewModel.stopSyncObserver()
+        }
     }
 
     // MARK: - Top Session Header
     private func sessionHeader(session: MomentSession) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // Live Elapsed Time
+            HStack(spacing: 5) {
+                Image(systemName: "clock")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
 
-            // Live Elapsed Time + Shared Badge
-            HStack(spacing: 8) {
-                HStack(spacing: 5) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    TimelineView(.periodic(from: .now, by: 1.0)) { context in
-                        Text(session.formattedElapsed(at: context.date))
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.primary)
-                    }
+                TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                    Text(session.formattedElapsed(at: context.date))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.primary)
                 }
+            }
 
-                if session.isShared {
+            if session.isShared, let room = session.room {
+                // Quick Room Code Tap-to-Copy Pill
+                let shortCode = String(room.id.prefix(8)).uppercased()
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    UIPasteboard.general.string = shortCode
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        copiedCodeFeedback = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            copiedCodeFeedback = false
+                        }
+                    }
+                } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "person.2.fill")
+                        Image(systemName: copiedCodeFeedback ? "checkmark.circle.fill" : "number")
                             .font(.system(size: 10, weight: .bold))
-                        Text("Shared")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(copiedCodeFeedback ? .green : .secondary)
+                        Text(copiedCodeFeedback ? "Copied" : shortCode)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundStyle(copiedCodeFeedback ? .green : .primary)
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 7)
                     .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
                 }
+                .buttonStyle(.plain)
             }
 
             Spacer()
@@ -261,7 +314,7 @@ struct ActiveMomentView: View {
                     .foregroundStyle(session.isAtCapacity && !session.isShared ? .orange : .primary)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 6)
     }

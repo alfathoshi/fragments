@@ -75,6 +75,11 @@ public final class CloudKitService {
         container?.sharedCloudDatabase
     }
 
+    /// Convenient accessor to the public CloudKit database for room code lookups.
+    public var publicDatabase: CKDatabase? {
+        container?.publicCloudDatabase
+    }
+
     // MARK: - Initialization
 
     /// Resolves the default CKContainer.

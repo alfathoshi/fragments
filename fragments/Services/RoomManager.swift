@@ -283,6 +283,21 @@ public final class RoomManager {
             }
             try? await localRepository.saveRoom(room)
             self.currentRoom = room
+
+            // Register current user as a collaborator member in CloudKit!
+            Task {
+                let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+                let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+                let member = RoomMember(
+                    roomId: room.id,
+                    userId: currentId,
+                    displayName: currentName,
+                    role: .member,
+                    joinedAt: Date()
+                )
+                try? await self.cloudKitRepository.saveMember(member)
+            }
+
             return room
         } catch {
             self.lastError = error.localizedDescription

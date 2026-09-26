@@ -17,6 +17,16 @@ public final class ProfileManager {
     public var signature: String = ""
     public var avatarImage: UIImage? = nil
 
+    /// Effective human-readable name for collaboration and UI display.
+    /// Returns the user's signature if set, otherwise "Unknown".
+    public var effectiveName: String {
+        let trimmed = signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return "Unknown"
+    }
+
     private let signatureKey = "profile_signature"
     private var avatarFileURL: URL {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)

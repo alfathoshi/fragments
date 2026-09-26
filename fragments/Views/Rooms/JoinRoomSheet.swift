@@ -1,0 +1,252 @@
+//
+//  JoinRoomSheet.swift
+//  fragments
+//
+//  Created on 9/27/26.
+//
+
+import SwiftUI
+
+/// Sheet enabling users to join a collaborative Room via direct invite link, iCloud share link, or Room ID.
+public struct JoinRoomSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    public var onJoined: ((Room) -> Void)? = nil
+
+    @State private var inputCode: String = ""
+    @State private var isJoining: Bool = false
+    @State private var errorMessage: String? = nil
+
+    private let roomManager = RoomManager.shared
+
+    public init(onJoined: ((Room) -> Void)? = nil) {
+        self.onJoined = onJoined
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 24) {
+                // Header prompt
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Join Shared Moment")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
+
+                    Text("Paste a share link or a Room ID to start collaborating.")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 12)
+
+                // Input Box with Paste Button
+                VStack(spacing: 10) {
+                    HStack {
+                        Image(systemName: "link")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+
+                        TextField("Paste link or enter Room Code...", text: $inputCode)
+                            .font(.system(size: 15, design: .rounded))
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+
+                        if !inputCode.isEmpty {
+                            Button {
+                                inputCode = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+
+                    // Quick Paste from Clipboard button
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if let pasted = UIPasteboard.general.string {
+                            inputCode = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("Paste from Clipboard")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(.tint)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 4)
+                }
+
+                if let error = errorMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(error)
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                }
+
+                Spacer()
+
+                // Join Button
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    handleJoin()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isJoining {
+                            ProgressView()
+                                .tint(colorScheme == .dark ? .black : .white)
+                        }
+                        Text(isJoining ? "Joining..." : "Join Moment")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                }
+                .glassProminentButtonStyle()
+                .tint(.primary)
+                .disabled(inputCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isJoining)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleJoin() {
+        let trimmed = inputCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isJoining = true
+        errorMessage = nil
+
+        Task {
+            // Case 1: Extract any iCloud share URL from the input (supports raw URL or pasted message)
+            let icloudURL: URL? = {
+                if let url = URL(string: trimmed),
+                   let host = url.host?.lowercased(),
+                   host.contains("icloud.com"),
+                   url.path.lowercased().contains("/share") {
+                    return url
+                }
+                if let match = trimmed.range(of: #"https?://www\.icloud\.com/share/[^\s]+"#, options: .regularExpression) {
+                    return URL(string: String(trimmed[match]))
+                }
+                return nil
+            }()
+
+            if let shareURL = icloudURL {
+                do {
+                    let room = try await roomManager.acceptShare(with: shareURL)
+                    await MainActor.run {
+                        isJoining = false
+                        onJoined?(room)
+                        dismiss()
+                    }
+                    return
+                } catch {
+                    await MainActor.run {
+                        isJoining = false
+                        errorMessage = "Could not join via iCloud: \(error.localizedDescription)"
+                    }
+                    return
+                }
+            }
+
+            // Case 2: Deep Link (fragments://room/join?id=...&name=...)
+            if let url = URL(string: trimmed), url.scheme == "fragments" {
+                let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+                let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? ""
+                let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
+
+                if !roomId.isEmpty {
+                    // Try looking up public CKShare URL first to mount CloudKit zone
+                    if let shareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: roomId) {
+                        do {
+                            let room = try await roomManager.acceptShare(with: shareURL)
+                            await MainActor.run {
+                                isJoining = false
+                                onJoined?(room)
+                                dismiss()
+                            }
+                            return
+                        } catch {
+                            print("⚠️ Failed to accept share via resolved URL: \(error.localizedDescription)")
+                        }
+                    }
+                }
+
+                let room = await roomManager.joinRoomDirect(id: roomId.isEmpty ? UUID().uuidString : roomId, name: roomName)
+                await MainActor.run {
+                    isJoining = false
+                    onJoined?(room)
+                    dismiss()
+                }
+                return
+            }
+
+            // Case 3: Raw Room Code / UUID / 8-char short code
+            // 1. Try public lookup to resolve native CKShare URL (with automatic retry for newly created rooms)
+            var resolvedShareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: trimmed)
+            if resolvedShareURL == nil {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                resolvedShareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: trimmed)
+            }
+
+            if let shareURL = resolvedShareURL {
+                do {
+                    let room = try await roomManager.acceptShare(with: shareURL)
+                    await MainActor.run {
+                        isJoining = false
+                        onJoined?(room)
+                        dismiss()
+                    }
+                    return
+                } catch {
+                    print("⚠️ Failed to accept share via resolved URL: \(error.localizedDescription)")
+                }
+            }
+
+            // 2. Try fetching room directly from CloudKit if already accepted or accessible
+            if let room = try? await CloudKitRoomRepository.shared.fetchRoom(id: trimmed) {
+                _ = await roomManager.joinRoomDirect(id: room.id, name: room.name)
+                await MainActor.run {
+                    isJoining = false
+                    onJoined?(room)
+                    dismiss()
+                }
+                return
+            }
+
+            // 3. Fallback: Lookup exact room ID and name from Public Cloud Relay
+            let resolvedInfo = await CloudKitRoomRepository.shared.lookupRoomInfo(for: trimmed)
+            let finalRoomID = resolvedInfo?.id ?? trimmed
+            let finalRoomName = resolvedInfo?.name ?? "Shared Moment"
+
+            let room = await roomManager.joinRoomDirect(id: finalRoomID, name: finalRoomName)
+            await MainActor.run {
+                isJoining = false
+                onJoined?(room)
+                dismiss()
+            }
+        }
+    }
+}

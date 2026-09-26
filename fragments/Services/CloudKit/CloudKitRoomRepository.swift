@@ -54,16 +54,159 @@ public final class CloudKitRoomRepository: Sendable {
         cloudKitService.sharedDatabase
     }
 
+    private var publicDB: CKDatabase? {
+        cloudKitService.publicDatabase
+    }
+
     private var container: CKContainer? {
         cloudKitService.container
     }
 
-    // MARK: - Zone Identification
+    // MARK: - Zone Identification & Dynamic Resolution
 
-    /// Creates a deterministic custom `CKRecordZone.ID` for a Room.
-    /// In Apple's sharing model, each collaborative Room lives in its own custom zone.
+    // Cache for resolved zones to eliminate repetitive zone queries and ensure instant access
+    private var resolvedZonesCache: [String: (zoneID: CKRecordZone.ID, database: CKDatabase)] = [:]
+    private let cacheLock = NSLock()
+
+    private func getCachedZone(for roomID: String) -> (zoneID: CKRecordZone.ID, database: CKDatabase)? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return resolvedZonesCache[roomID]
+    }
+
+    private func setCachedZone(_ value: (zoneID: CKRecordZone.ID, database: CKDatabase), for roomID: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        resolvedZonesCache[roomID] = value
+    }
+
+    /// Creates a deterministic custom `CKRecordZone.ID` for a Room in private database.
     public func zoneID(for roomID: String, ownerName: String = CKCurrentUserDefaultName) -> CKRecordZone.ID {
         CKRecordZone.ID(zoneName: "RoomZone_\(roomID)", ownerName: ownerName)
+    }
+
+    /// Dynamically resolves the zone ID and database for a room.
+    /// - For the owner: returns the custom zone in `privateDatabase`.
+    /// - For a collaborator: finds the mounted zone in `sharedDatabase` (with host's ownerName).
+    public func resolveZone(for roomID: String) async -> (zoneID: CKRecordZone.ID, database: CKDatabase)? {
+        if let cached = getCachedZone(for: roomID) {
+            return cached
+        }
+
+        guard let privateDB, let sharedDB else { return nil }
+
+        let defaultZoneID = zoneID(for: roomID)
+
+        // 1. Check if zone is owned by current user in private database
+        if let privateZones = try? await privateDB.allRecordZones(),
+           privateZones.contains(where: { $0.zoneID == defaultZoneID }) {
+            let res = (defaultZoneID, privateDB)
+            setCachedZone(res, for: roomID)
+            return res
+        }
+
+        // 2. Look for mounted shared zone in sharedDatabase (with host's ownerName)
+        let expectedName = "RoomZone_\(roomID)"
+        if let sharedZones = try? await sharedDB.allRecordZones(),
+           let matching = sharedZones.first(where: { $0.zoneID.zoneName == expectedName }) {
+            let res = (matching.zoneID, sharedDB)
+            setCachedZone(res, for: roomID)
+            return res
+        }
+
+        // 3. Fallback: default to privateDB (owner fallback or offline)
+        let fallback = (defaultZoneID, privateDB)
+        return fallback
+    }
+
+    // MARK: - Public Room Share Lookup (Join by Code)
+
+    /// Publishes a mapping from `roomID` to `shareURL` in the public database,
+    /// enabling participants to join seamlessly by entering just the Room Code.
+    public func publishShareLookup(roomID: String, shareURL: URL, name: String) async {
+        guard let publicDB else { return }
+        let shortCode = String(roomID.prefix(8)).uppercased()
+
+        // 1. Save with full room ID
+        let recordID = CKRecord.ID(recordName: "Lookup_\(roomID)")
+        let record = CKRecord(recordType: "RoomLookup", recordID: recordID)
+        record["shareURL"] = shareURL.absoluteString as CKRecordValue
+        record["roomName"] = name as CKRecordValue
+        record["roomID"] = roomID as CKRecordValue
+        record["shortCode"] = shortCode as CKRecordValue
+        _ = try? await publicDB.save(record)
+
+        // 2. Also save by shortCode directly as recordName so NO query index is ever needed
+        let shortRecordID = CKRecord.ID(recordName: "Lookup_Short_\(shortCode)")
+        let shortRecord = CKRecord(recordType: "RoomLookup", recordID: shortRecordID)
+        shortRecord["shareURL"] = shareURL.absoluteString as CKRecordValue
+        shortRecord["roomName"] = name as CKRecordValue
+        shortRecord["roomID"] = roomID as CKRecordValue
+        shortRecord["shortCode"] = shortCode as CKRecordValue
+        _ = try? await publicDB.save(shortRecord)
+    }
+
+    /// Looks up the `CKShare` URL for a given Room Code from the public database.
+    public func lookupShareURL(for code: String) async -> URL? {
+        guard let publicDB else { return nil }
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1. Try direct fetch by full room ID (works with 0 query indexes)
+        let recordID = CKRecord.ID(recordName: "Lookup_\(trimmed)")
+        if let record = try? await publicDB.record(for: recordID),
+           let urlString = record["shareURL"] as? String,
+           let url = URL(string: urlString) {
+            return url
+        }
+
+        // 2. Try direct fetch by shortCode record name (works with 0 query indexes)
+        let shortCode = String(trimmed.prefix(8)).uppercased()
+        let shortRecordID = CKRecord.ID(recordName: "Lookup_Short_\(shortCode)")
+        if let record = try? await publicDB.record(for: shortRecordID),
+           let urlString = record["shareURL"] as? String,
+           let url = URL(string: urlString) {
+            return url
+        }
+
+        // 3. Fallback query by shortCode if index exists
+        let predicate = NSPredicate(format: "shortCode == %@", shortCode)
+        let query = CKQuery(recordType: "RoomLookup", predicate: predicate)
+        if let (results, _) = try? await publicDB.records(matching: query),
+           let firstMatch = results.first {
+            if case .success(let record) = firstMatch.1,
+               let urlString = record["shareURL"] as? String,
+               let url = URL(string: urlString) {
+                return url
+            }
+        }
+
+        return nil
+    }
+
+    /// Resolves full room ID and room name from the public database using a room code,
+    /// enabling fallback collaboration to link directly to the correct room.
+    public func lookupRoomInfo(for code: String) async -> (id: String, name: String)? {
+        guard let publicDB else { return nil }
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shortCode = String(trimmed.prefix(8)).uppercased()
+
+        // 1. Try Lookup_Short_<shortCode>
+        let shortRecordID = CKRecord.ID(recordName: "Lookup_Short_\(shortCode)")
+        if let record = try? await publicDB.record(for: shortRecordID) {
+            let rID = (record["roomID"] as? String) ?? trimmed
+            let rName = (record["roomName"] as? String) ?? "Shared Moment"
+            return (rID, rName)
+        }
+
+        // 2. Try Lookup_<trimmed>
+        let fullRecordID = CKRecord.ID(recordName: "Lookup_\(trimmed)")
+        if let record = try? await publicDB.record(for: fullRecordID) {
+            let rID = (record["roomID"] as? String) ?? trimmed
+            let rName = (record["roomName"] as? String) ?? "Shared Moment"
+            return (rID, rName)
+        }
+
+        return nil
     }
 
     /// Ensures the custom `CKRecordZone` exists in the owner's private database.
@@ -183,6 +326,14 @@ public final class CloudKitRoomRepository: Sendable {
         // 7. Update room with share record identifier
         room.shareRecordID = savedShare.recordID.recordName
 
+        setCachedZone((roomZoneID, privateDB), for: roomID)
+
+        if let url = savedShare.url {
+            Task {
+                await self.publishShareLookup(roomID: roomID, shareURL: url, name: name)
+            }
+        }
+
         return (room, savedShare)
     }
 
@@ -296,17 +447,11 @@ public final class CloudKitRoomRepository: Sendable {
 
     /// Updates mutable metadata of an existing Room in CloudKit.
     public func updateRoom(_ room: Room) async throws {
-        guard let privateDB, let sharedDB else {
+        guard let (zone, targetDB) = await resolveZone(for: room.id) else {
             throw CloudKitRoomError.offline
         }
 
-        let zone = zoneID(for: room.id)
         let recordID = CKRecord.ID(recordName: room.id, zoneID: zone)
-
-        // Determine if target database is private or shared
-        let isOwned = (try? await privateDB.record(for: recordID)) != nil
-        let targetDB = isOwned ? privateDB : sharedDB
-
         guard let existingRecord = try? await targetDB.record(for: recordID) else {
             throw CloudKitRoomError.roomNotFound(room.id)
         }
@@ -337,28 +482,32 @@ public final class CloudKitRoomRepository: Sendable {
 
     /// Retrieves an existing `CKShare` for a Room.
     public func fetchShare(for room: Room) async throws -> CKShare? {
-        guard let privateDB else {
+        guard let (zone, targetDB) = await resolveZone(for: room.id) else {
             return nil
         }
 
-        let zone = zoneID(for: room.id)
         guard let shareName = room.shareRecordID else {
             // Check if share exists on the room record
             let roomRecordID = CKRecord.ID(recordName: room.id, zoneID: zone)
-            if let record = try? await privateDB.record(for: roomRecordID),
+            if let record = try? await targetDB.record(for: roomRecordID),
                let shareRef = record.share {
-                return try? await privateDB.record(for: shareRef.recordID) as? CKShare
+                return try? await targetDB.record(for: shareRef.recordID) as? CKShare
             }
             return nil
         }
 
         let shareRecordID = CKRecord.ID(recordName: shareName, zoneID: zone)
-        return try? await privateDB.record(for: shareRecordID) as? CKShare
+        return try? await targetDB.record(for: shareRecordID) as? CKShare
     }
 
     /// Retrieves an existing `CKShare` for a Room, or attempts to provision it if not yet created.
     public func getOrCreateShare(for room: Room) async throws -> CKShare? {
         if let existing = try await fetchShare(for: room) {
+            if let url = existing.url {
+                Task {
+                    await self.publishShareLookup(roomID: room.id, shareURL: url, name: room.name)
+                }
+            }
             return existing
         }
 
@@ -373,7 +522,13 @@ public final class CloudKitRoomRepository: Sendable {
             return share
         } catch {
             // Re-check once in case background task created it concurrently
-            return try? await fetchShare(for: room)
+            let recheck = try? await fetchShare(for: room)
+            if let url = recheck?.url {
+                Task {
+                    await self.publishShareLookup(roomID: room.id, shareURL: url, name: room.name)
+                }
+            }
+            return recheck
         }
     }
 
@@ -443,6 +598,9 @@ public final class CloudKitRoomRepository: Sendable {
         let share = try await acceptShare(metadata: metadata)
 
         let rootRecordID = metadata.rootRecordID
+        // Cache the shared zone ID immediately so queries hit the correct host-owned zone!
+        setCachedZone((rootRecordID.zoneID, sharedDB), for: rootRecordID.recordName)
+
         guard let roomRecord = try? await sharedDB.record(for: rootRecordID),
               let room = CloudKitRecordMapper.toRoom(from: roomRecord) else {
             throw CloudKitRoomError.roomNotFound(rootRecordID.recordName)
@@ -455,118 +613,244 @@ public final class CloudKitRoomRepository: Sendable {
 
     /// Saves a `RoomMember` record to CloudKit.
     public func saveMember(_ member: RoomMember) async throws {
-        guard let privateDB, let sharedDB else {
+        // 1. Dual-write to Public Cloud Relay
+        Task {
+            await self.publishMemberPublicRelay(member)
+        }
+
+        guard let (zone, targetDB) = await resolveZone(for: member.roomId) else {
             throw CloudKitRoomError.offline
         }
 
-        let zone = zoneID(for: member.roomId)
         let recordID = CKRecord.ID(recordName: member.id, zoneID: zone)
-
-        let isOwned = (try? await privateDB.allRecordZones())?
-            .contains(where: { $0.zoneID == zone }) ?? false
-        let targetDB = isOwned ? privateDB : sharedDB
-
         let existingRecord = try? await targetDB.record(for: recordID)
         let record = CloudKitRecordMapper.toRecord(from: member, in: zone, existingRecord: existingRecord)
         _ = try await targetDB.save(record)
     }
 
-    /// Fetches all members in a room.
+    /// Fetches all members in a room across custom zone and public relay.
     public func fetchMembers(roomID: String) async throws -> [RoomMember] {
-        guard let privateDB, let sharedDB else {
-            return []
-        }
+        var membersByID: [String: RoomMember] = [:]
 
-        let zone = zoneID(for: roomID)
-        let isOwned = (try? await privateDB.allRecordZones())?
-            .contains(where: { $0.zoneID == zone }) ?? false
-        let targetDB = isOwned ? privateDB : sharedDB
-
-        let predicate = NSPredicate(format: "\(CloudKitRecordKey.memberRoomId) == %@", roomID)
-        let query = CKQuery(recordType: CloudKitRecordType.roomMember, predicate: predicate)
-
-        do {
-            let (matchResults, _) = try await targetDB.records(matching: query, inZoneWith: zone)
-            var members: [RoomMember] = []
-            for (_, result) in matchResults {
-                if case .success(let record) = result,
-                   let member = CloudKitRecordMapper.toRoomMember(from: record) {
-                    members.append(member)
+        // 1. Fetch from custom zone (if mounted/available)
+        if let (zone, targetDB) = await resolveZone(for: roomID) {
+            let query = CKQuery(recordType: CloudKitRecordType.roomMember, predicate: NSPredicate(value: true))
+            if let (matchResults, _) = try? await targetDB.records(matching: query, inZoneWith: zone) {
+                for (_, result) in matchResults {
+                    if case .success(let record) = result,
+                       let member = CloudKitRecordMapper.toRoomMember(from: record) {
+                        if member.roomId == roomID {
+                            membersByID[member.id] = member
+                        }
+                    }
                 }
             }
-            return members.sorted { $0.joinedAt < $1.joinedAt }
-        } catch {
-            return []
         }
+
+        // 2. Fetch from Public Cloud Relay (cross-account and development fallback)
+        let relayMembers = await fetchMembersPublicRelay(roomID: roomID)
+        for member in relayMembers {
+            if membersByID[member.id] == nil {
+                membersByID[member.id] = member
+            }
+        }
+
+        return Array(membersByID.values).sorted { $0.joinedAt < $1.joinedAt }
     }
 
     // MARK: - SharedFragment CRUD with Deterministic Ordering
 
-    /// Saves a `SharedFragment` record to CloudKit in the room's custom zone.
+    /// Saves a `SharedFragment` record to CloudKit in the room's custom zone and public relay.
     public func saveFragment(_ fragment: SharedFragment) async throws {
-        guard let privateDB, let sharedDB else {
+        // 1. Dual-write to Public Cloud Relay for instant cross-device delivery
+        Task {
+            await self.publishFragmentPublicRelay(fragment)
+        }
+
+        guard let (zone, targetDB) = await resolveZone(for: fragment.roomId) else {
             throw CloudKitRoomError.offline
         }
 
-        let zone = zoneID(for: fragment.roomId)
         let recordID = CKRecord.ID(recordName: fragment.id, zoneID: zone)
-
-        let isOwned = (try? await privateDB.allRecordZones())?
-            .contains(where: { $0.zoneID == zone }) ?? false
-        let targetDB = isOwned ? privateDB : sharedDB
-
         let existingRecord = try? await targetDB.record(for: recordID)
         let record = CloudKitRecordMapper.toRecord(from: fragment, in: zone, existingRecord: existingRecord)
         _ = try await targetDB.save(record)
     }
 
-    /// Fetches fragments for a room and enforces deterministic ordering:
-    /// `createdAt ASC` with `id ASC` as tie-breaker.
+    /// Fetches fragments for a room across custom zone and public relay, enforcing deterministic ordering.
     public func fetchFragments(roomID: String) async throws -> [SharedFragment] {
-        guard let privateDB, let sharedDB else {
-            return []
-        }
+        var fragmentsByID: [String: SharedFragment] = [:]
 
-        let zone = zoneID(for: roomID)
-        let isOwned = (try? await privateDB.allRecordZones())?
-            .contains(where: { $0.zoneID == zone }) ?? false
-        let targetDB = isOwned ? privateDB : sharedDB
-
-        let predicate = NSPredicate(format: "\(CloudKitRecordKey.fragmentRoomId) == %@", roomID)
-        let query = CKQuery(recordType: CloudKitRecordType.sharedFragment, predicate: predicate)
-
-        do {
-            let (matchResults, _) = try await targetDB.records(matching: query, inZoneWith: zone)
-            var fragments: [SharedFragment] = []
-            for (_, result) in matchResults {
-                if case .success(let record) = result,
-                   let fragment = CloudKitRecordMapper.toSharedFragment(from: record) {
-                    fragments.append(fragment)
+        // 1. Fetch from custom zone (if available)
+        if let (zone, targetDB) = await resolveZone(for: roomID) {
+            let query = CKQuery(recordType: CloudKitRecordType.sharedFragment, predicate: NSPredicate(value: true))
+            if let (matchResults, _) = try? await targetDB.records(matching: query, inZoneWith: zone) {
+                for (_, result) in matchResults {
+                    if case .success(let record) = result,
+                       let fragment = CloudKitRecordMapper.toSharedFragment(from: record) {
+                        if fragment.roomId == roomID {
+                            fragmentsByID[fragment.id] = fragment
+                        }
+                    }
                 }
             }
+        }
 
-            // Enforce deterministic collaborative ordering across all devices:
-            // Primary sort: createdAt ASC; Secondary sort (tie-breaker): id ASC
-            return Self.sortDeterministically(fragments)
-        } catch {
+        // 2. Fetch from Public Cloud Relay (universal cross-account fallback)
+        let relayFragments = await fetchFragmentsPublicRelay(roomID: roomID)
+        for frag in relayFragments {
+            if fragmentsByID[frag.id] == nil {
+                fragmentsByID[frag.id] = frag
+            }
+        }
+
+        return Self.sortDeterministically(Array(fragmentsByID.values))
+    }
+
+    // MARK: - Public Cloud Relay Implementation
+
+    /// Publishes a fragment to the CloudKit public database relay using a direct manifest record,
+    /// enabling real-time collaboration across devices with identical or unauthenticated accounts.
+    public func publishFragmentPublicRelay(_ fragment: SharedFragment, assetURL: URL? = nil) async {
+        guard let publicDB else { return }
+
+        // 1. Save media asset if present to PublicMedia_<id>
+        if let assetURL = assetURL ?? fragment.mediaReference?.localFileURL,
+           FileManager.default.fileExists(atPath: assetURL.path) {
+            let mediaRecordID = CKRecord.ID(recordName: "PublicMedia_\(fragment.id)")
+            let mediaRecord = CKRecord(recordType: "PublicMedia", recordID: mediaRecordID)
+            mediaRecord["mediaAsset"] = CKAsset(fileURL: assetURL)
+            mediaRecord["fileExtension"] = assetURL.pathExtension as CKRecordValue
+            mediaRecord["fragmentID"] = fragment.id as CKRecordValue
+            _ = try? await publicDB.save(mediaRecord)
+        }
+
+        // 2. Fetch or create RoomManifest_<roomID>
+        let manifestID = CKRecord.ID(recordName: "RoomManifest_\(fragment.roomId)")
+        let manifestRecord = (try? await publicDB.record(for: manifestID)) ?? CKRecord(recordType: "RoomManifest", recordID: manifestID)
+
+        var existingJSONs = (manifestRecord["fragmentJSONs"] as? [String]) ?? []
+        var existingIDs = (manifestRecord["fragmentIDs"] as? [String]) ?? []
+
+        if !existingIDs.contains(fragment.id) {
+            if let data = try? JSONEncoder().encode(fragment),
+               let jsonStr = String(data: data, encoding: .utf8) {
+                existingIDs.append(fragment.id)
+                existingJSONs.append(jsonStr)
+
+                manifestRecord["fragmentIDs"] = existingIDs as CKRecordValue
+                manifestRecord["fragmentJSONs"] = existingJSONs as CKRecordValue
+                manifestRecord["updatedAt"] = Date() as CKRecordValue
+                _ = try? await publicDB.save(manifestRecord)
+            }
+        }
+    }
+
+    /// Fetches all fragments published to the public relay for a room without requiring any query indexes.
+    public func fetchFragmentsPublicRelay(roomID: String) async -> [SharedFragment] {
+        guard let publicDB else { return [] }
+        let manifestID = CKRecord.ID(recordName: "RoomManifest_\(roomID)")
+
+        guard let record = try? await publicDB.record(for: manifestID),
+              let jsonStrings = record["fragmentJSONs"] as? [String] else {
             return []
         }
+
+        var results: [SharedFragment] = []
+        for jsonStr in jsonStrings {
+            if let data = jsonStr.data(using: .utf8),
+               var frag = try? JSONDecoder().decode(SharedFragment.self, from: data) {
+                // If media was not resolved yet, check PublicMedia
+                if frag.mediaReference?.localFileURL == nil && (frag.type == .photo || frag.type == .video || frag.type == .audio) {
+                    let mediaRecordID = CKRecord.ID(recordName: "PublicMedia_\(frag.id)")
+                    if let mediaRecord = try? await publicDB.record(for: mediaRecordID),
+                       let asset = mediaRecord["mediaAsset"] as? CKAsset,
+                       let assetURL = asset.fileURL {
+                        var ref = frag.mediaReference ?? SharedMediaReference()
+                        ref.localFileURL = assetURL
+                        frag.mediaReference = ref
+                    }
+                }
+                results.append(frag)
+            }
+        }
+        return results
+    }
+
+    /// Publishes a member to the public relay for a room.
+    public func publishMemberPublicRelay(_ member: RoomMember) async {
+        guard let publicDB else { return }
+        let manifestID = CKRecord.ID(recordName: "RoomManifest_\(member.roomId)")
+        let manifestRecord = (try? await publicDB.record(for: manifestID)) ?? CKRecord(recordType: "RoomManifest", recordID: manifestID)
+
+        var existingJSONs = (manifestRecord["memberJSONs"] as? [String]) ?? []
+        var existingIDs = (manifestRecord["memberIDs"] as? [String]) ?? []
+
+        if !existingIDs.contains(member.id) {
+            if let data = try? JSONEncoder().encode(member),
+               let jsonStr = String(data: data, encoding: .utf8) {
+                existingIDs.append(member.id)
+                existingJSONs.append(jsonStr)
+
+                manifestRecord["memberIDs"] = existingIDs as CKRecordValue
+                manifestRecord["memberJSONs"] = existingJSONs as CKRecordValue
+                manifestRecord["updatedAt"] = Date() as CKRecordValue
+                _ = try? await publicDB.save(manifestRecord)
+            }
+        }
+    }
+
+    /// Fetches all members published to the public relay for a room.
+    public func fetchMembersPublicRelay(roomID: String) async -> [RoomMember] {
+        guard let publicDB else { return [] }
+        let manifestID = CKRecord.ID(recordName: "RoomManifest_\(roomID)")
+
+        guard let record = try? await publicDB.record(for: manifestID),
+              let jsonStrings = record["memberJSONs"] as? [String] else {
+            return []
+        }
+
+        var results: [RoomMember] = []
+        for jsonStr in jsonStrings {
+            if let data = jsonStr.data(using: .utf8),
+               let member = try? JSONDecoder().decode(RoomMember.self, from: data) {
+                results.append(member)
+            }
+        }
+        return results
     }
 
     /// Deletes a shared fragment from CloudKit.
     public func deleteFragment(id: String, roomID: String) async throws {
-        guard let privateDB, let sharedDB else {
+        guard let (zone, targetDB) = await resolveZone(for: roomID) else {
             throw CloudKitRoomError.offline
         }
 
-        let zone = zoneID(for: roomID)
         let recordID = CKRecord.ID(recordName: id, zoneID: zone)
-
-        let isOwned = (try? await privateDB.allRecordZones())?
-            .contains(where: { $0.zoneID == zone }) ?? false
-        let targetDB = isOwned ? privateDB : sharedDB
-
         _ = try await targetDB.deleteRecord(withID: recordID)
+    }
+
+    /// Marks a room as ended in the Public Cloud Relay so collaborators learn immediately that the session concluded.
+    public func markRoomEndedPublicRelay(roomID: String, finalTitle: String) async {
+        guard let publicDB else { return }
+        let manifestID = CKRecord.ID(recordName: "RoomManifest_\(roomID)")
+        let manifestRecord = (try? await publicDB.record(for: manifestID)) ?? CKRecord(recordType: "RoomManifest", recordID: manifestID)
+        manifestRecord["isEnded"] = 1 as CKRecordValue
+        manifestRecord["finalTitle"] = finalTitle as CKRecordValue
+        manifestRecord["updatedAt"] = Date() as CKRecordValue
+        _ = try? await publicDB.save(manifestRecord)
+    }
+
+    /// Checks if a room has been marked as ended in Public Cloud Relay.
+    public func checkRoomEndedPublicRelay(roomID: String) async -> (isEnded: Bool, finalTitle: String?) {
+        guard let publicDB else { return (false, nil) }
+        let manifestID = CKRecord.ID(recordName: "RoomManifest_\(roomID)")
+        guard let manifestRecord = try? await publicDB.record(for: manifestID) else {
+            return (false, nil)
+        }
+        let isEnded = (manifestRecord["isEnded"] as? Int64 ?? 0) == 1 || (manifestRecord["isEnded"] as? Int ?? 0) == 1
+        let title = manifestRecord["finalTitle"] as? String
+        return (isEnded, title)
     }
 
     // MARK: - Deterministic Sorting Utility

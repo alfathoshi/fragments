@@ -21,17 +21,20 @@ public struct FloatingCaptureOverlay: View {
 
     public var onSelectStartPersonalMoment: () -> Void
     public var onSelectStartSharedMoment: () -> Void
+    public var onSelectJoinMoment: () -> Void
     public var onSelectQuickCaptureType: (FragmentType) -> Void
 
     public init(
         isOpen: Binding<Bool>,
         onSelectStartPersonalMoment: @escaping () -> Void,
         onSelectStartSharedMoment: @escaping () -> Void,
+        onSelectJoinMoment: @escaping () -> Void = {},
         onSelectQuickCaptureType: @escaping (FragmentType) -> Void
     ) {
         self._isOpen = isOpen
         self.onSelectStartPersonalMoment = onSelectStartPersonalMoment
         self.onSelectStartSharedMoment = onSelectStartSharedMoment
+        self.onSelectJoinMoment = onSelectJoinMoment
         self.onSelectQuickCaptureType = onSelectQuickCaptureType
         if CommandLine.arguments.contains("-momentScope") {
             self._stage = State(initialValue: .momentScope)
@@ -47,6 +50,7 @@ public struct FloatingCaptureOverlay: View {
             isOpen: isOpen,
             onSelectStartPersonalMoment: onSelectStartMoment,
             onSelectStartSharedMoment: onSelectStartMoment,
+            onSelectJoinMoment: {},
             onSelectQuickCaptureType: onSelectQuickCaptureType
         )
     }
@@ -112,12 +116,12 @@ public struct FloatingCaptureOverlay: View {
         }
     }
 
-    // MARK: - 1. Primary Orbs (2 Options)
+    // MARK: - 1. Primary Orbs (Start a Moment, Join Moment, Quick Capture)
     private var primaryOrbs: some View {
         VStack(alignment: .trailing, spacing: 18) {
             // Option 1: Start a Moment (Expands to Personal / Shared)
             orbRow(
-                title: "Start a Moment",
+                title: "Start Moment",
                 icon: "sparkles.rectangle.stack.fill",
                 gradient: [.white, .black],
                 shadowColor: Color.white
@@ -128,7 +132,19 @@ public struct FloatingCaptureOverlay: View {
                 }
             }
 
-            // Option 2: Quick Capture (Expands into 4 options)
+            // Option 2: Join Moment (Opens Join Sheet)
+            orbRow(
+                title: "Join Moment",
+                icon: "person.badge.plus",
+                gradient: [.white, .black],
+                shadowColor: Color.white
+            ) {
+                dismissMenu {
+                    onSelectJoinMoment()
+                }
+            }
+
+            // Option 3: Quick Capture (Expands into 4 options)
             orbRow(
                 title: "Quick Capture",
                 icon: "bolt.fill",

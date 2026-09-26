@@ -19,6 +19,7 @@ private struct PersistedSessionInfo: Codable {
     let location: String
     var isShared: Bool?
     var room: Room?
+    var isHost: Bool?
 }
 
 private let kPersistedSessionKey = "fragments.activeSessionInfo"
@@ -36,6 +37,10 @@ final class MomentManager {
     var showEndMomentSheet: Bool = false
     var recentlySavedMoment: FolderCollection? = nil
 
+    /// Tracks whether the current user explicitly left a shared session.
+    /// When true, prevents any auto-save (Multipeer or CloudKit relay) from persisting the moment.
+    private(set) var hasLeftSession: Bool = false
+
     private var modelContext: ModelContext?
     /// Reference to the currently running Live Activity (nil when no session is active).
     private var liveActivity: Activity<MomentActivityAttributes>?
@@ -46,6 +51,7 @@ final class MomentManager {
 
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
+        setupMultipeerCallbacks()
         if let context = modelContext {
             loadPersistedData(context: context)
         }
@@ -127,7 +133,8 @@ final class MomentManager {
                 fragments: [],
                 location: info.location,
                 isShared: info.isShared ?? false,
-                room: info.room
+                room: info.room,
+                isHost: info.isHost ?? true
             )
         }
     }
@@ -282,6 +289,7 @@ final class MomentManager {
     /// Starts a new Moment recording session
     func startSession(location: String? = nil, isShared: Bool = false, room: Room? = nil) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        hasLeftSession = false
         let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
         let newSession = MomentSession(
             startDate: Date(),
@@ -314,7 +322,19 @@ final class MomentManager {
         // 1. Immediately launch the active session so UI transitions with 0ms latency
         startSession(location: resolvedLocation, isShared: true, room: optimisticRoom)
 
-        // 2. Asynchronously provision the Room in CloudKit in the background
+        // 2. Start zero-config local P2P sync as Host
+        let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+        let hostMember = RoomMember(
+            roomId: roomId,
+            userId: currentId,
+            displayName: currentName,
+            role: .owner,
+            joinedAt: Date()
+        )
+        MultipeerSyncService.shared.start(roomID: roomId, localMember: hostMember, isHost: true)
+
+        // 3. Asynchronously provision the Room in CloudKit in the background
         Task {
             if let provisionedRoom = try? await RoomManager.shared.createRoom(
                 id: roomId,
@@ -329,6 +349,64 @@ final class MomentManager {
                     }
                 }
             }
+        }
+    }
+
+    /// Joins an existing collaborative Shared Moment session in progress
+    func joinSharedSession(room: Room) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        hasLeftSession = false
+
+        let cached = (try? LocalRoomCache.shared.loadFragments(roomID: room.id))?.map { $0.toFragment() } ?? []
+        let resolvedLocation = room.name.replacingOccurrences(of: "Moment in ", with: "")
+
+        let session = MomentSession(
+            startDate: room.createdAt,
+            fragments: cached,
+            location: resolvedLocation.isEmpty ? "Shared Location" : resolvedLocation,
+            isShared: true,
+            room: room,
+            isHost: false
+        )
+        activeSession = session
+        persistSession(session)
+        startLiveActivity(session: session)
+
+        // Start zero-config local P2P sync as Joiner
+        let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+        let member = RoomMember(
+            roomId: room.id,
+            userId: currentId,
+            displayName: currentName,
+            role: room.createdBy == currentId ? .owner : .member,
+            joinedAt: Date()
+        )
+        MultipeerSyncService.shared.start(roomID: room.id, localMember: member, isHost: false)
+
+        // Asynchronously pull remote fragments from CloudKit in background
+        Task {
+            if let liveFragments = try? await CloudKitRoomRepository.shared.fetchFragments(roomID: room.id) {
+                let domainFragments = liveFragments.map { $0.toFragment() }
+                await MainActor.run {
+                    if var current = self.activeSession, current.isShared, current.room?.id == room.id {
+                        var combined = current.fragments
+                        for frag in domainFragments {
+                            if !combined.contains(where: { $0.id == frag.id }) {
+                                combined.append(frag)
+                            }
+                        }
+                        current.fragments = combined
+                        self.activeSession = current
+                        self.persistSession(current)
+                    }
+                }
+            }
+        }
+
+        // Register current user as a participant member in CloudKit
+        Task {
+            try? await CloudKitRoomRepository.shared.saveMember(member)
         }
     }
 
@@ -347,8 +425,63 @@ final class MomentManager {
 
         session.fragments.append(newFragment)
         activeSession = session
+        persistSession(session)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         updateLiveActivity(session: session)
+
+        // Automatically sync to CloudKit and Multipeer if in a collaborative Shared Moment!
+        if session.isShared, let room = session.room {
+            let sharedFrag = newFragment.toSharedFragment(roomId: room.id)
+
+            // 1. Instant local peer-to-peer broadcast (<50ms latency)
+            MultipeerSyncService.shared.broadcastFragment(sharedFrag)
+
+            // 2. Dual-sync to CloudKit & Public Cloud Relay
+            if !RoomManager.shared.fragments.contains(where: { $0.id == newFragment.id.uuidString }) {
+                Task {
+                    try? await RoomManager.shared.captureSharedFragment(sharedFrag)
+                }
+            }
+        }
+    }
+
+    // MARK: - Multipeer Connectivity Integration
+
+    private func setupMultipeerCallbacks() {
+        MultipeerSyncService.shared.onFragmentReceived = { [weak self] sharedFrag in
+            guard let self = self, var current = self.activeSession, current.isShared else { return }
+            let frag = sharedFrag.toFragment()
+            if !current.fragments.contains(where: { $0.id == frag.id }) {
+                current.fragments.append(frag)
+                self.activeSession = current
+                self.persistSession(current)
+                self.updateLiveActivity(session: current)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if let room = current.room {
+                    try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+                }
+            }
+        }
+
+        MultipeerSyncService.shared.onMemberReceived = { [weak self] member in
+            guard let self = self, var current = self.activeSession, current.isShared else { return }
+            if var r = current.room {
+                r.memberCount = max(r.memberCount, MultipeerSyncService.shared.connectedPeerCount + 1)
+                current.room = r
+                self.activeSession = current
+                self.persistSession(current)
+            }
+        }
+
+        MultipeerSyncService.shared.onSyncRequest = { [weak self] in
+            guard let self = self, let session = self.activeSession, let room = session.room else { return [] }
+            return session.fragments.map { $0.toSharedFragment(roomId: room.id) }
+        }
+
+        MultipeerSyncService.shared.onSessionEnded = { [weak self] finalTitle in
+            guard let self = self, !self.hasLeftSession, let session = self.activeSession, !session.isHost else { return }
+            self.finishSessionAsMember(finalTitle: finalTitle)
+        }
     }
 
     /// Prompts the End Moment sheet to name & categorize the session
@@ -397,12 +530,18 @@ final class MomentManager {
             try? ctx.save()
         }
 
-        // If session was shared, also update/save the Room in RoomManager!
+        // If session was shared, also update/save the Room in RoomManager & broadcast sessionEnded!
         if session.isShared, var room = session.room {
             room.name = finalTitle
             room.accentColorHex = color?.toRGBAString()
             room.fragmentCount = session.fragments.count
+
+            // 1. Broadcast sessionEnded via local Multipeer
+            MultipeerSyncService.shared.broadcastSessionEnded(finalTitle: finalTitle, finalCategory: category)
+
+            // 2. Mark in Public Cloud Relay and update room
             Task {
+                await CloudKitRoomRepository.shared.markRoomEndedPublicRelay(roomID: room.id, finalTitle: finalTitle)
                 try? await RoomManager.shared.updateRoom(room)
             }
         }
@@ -410,6 +549,68 @@ final class MomentManager {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         clearPersistedSession()
         endLiveActivity()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            MultipeerSyncService.shared.stop()
+        }
+        return newCollection
+    }
+
+    /// Leaves an active shared moment session as a participant without deleting the room for others.
+    func leaveSession() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        hasLeftSession = true
+        // Clear Multipeer callbacks to prevent delayed auto-save
+        MultipeerSyncService.shared.onSessionEnded = nil
+        MultipeerSyncService.shared.onFragmentReceived = nil
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+            activeSession = nil
+            showEndMomentSheet = false
+        }
+        clearPersistedSession()
+        endLiveActivity()
+        MultipeerSyncService.shared.stop()
+    }
+
+    /// Finalizes and saves the shared moment collection into the member's device when the host saves the session.
+    @discardableResult
+    func finishSessionAsMember(
+        finalTitle: String,
+        category: String = "Life",
+        color: Color? = nil
+    ) -> FolderCollection? {
+        // If the user explicitly left the session, do not auto-save
+        guard !hasLeftSession else { return nil }
+        guard let session = activeSession else { return nil }
+
+        let folderItems = session.createFolderItems()
+        let newCollection = FolderCollection(
+            id: session.id,
+            name: finalTitle.isEmpty ? session.location : finalTitle,
+            location: session.location,
+            date: session.startDate,
+            items: folderItems,
+            color: color,
+            isShared: true,
+            roomID: session.room?.id
+        )
+
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.76)) {
+            collections.insert(newCollection, at: 0)
+            activeSession = nil
+            showEndMomentSheet = false
+            recentlySavedMoment = newCollection
+        }
+
+        if let ctx = modelContext {
+            let sdMoment = SDMoment(from: newCollection)
+            ctx.insert(sdMoment)
+            try? ctx.save()
+        }
+
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        clearPersistedSession()
+        endLiveActivity()
+        MultipeerSyncService.shared.stop()
         return newCollection
     }
 
@@ -423,24 +624,37 @@ final class MomentManager {
         }
         clearPersistedSession()
         endLiveActivity()
+        MultipeerSyncService.shared.stop()
 
         if let session = sessionToCancel, session.isShared, let room = session.room {
-            Task {
-                try? await RoomManager.shared.deleteRoom(id: room.id)
+            let currentUserId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+            if room.createdBy == currentUserId {
+                Task {
+                    try? await RoomManager.shared.deleteRoom(id: room.id)
+                }
             }
         }
+    }
+
+    /// Updates the active session fragments from an external source (e.g. collaborative live sync)
+    func updateActiveSessionFragments(_ fragments: [Fragment]) {
+        guard var current = activeSession else { return }
+        current.fragments = fragments
+        activeSession = current
+        persistSession(current)
     }
 
     // MARK: - Session Persistence Helpers
 
     /// Saves a lightweight snapshot of the session to UserDefaults so it survives app termination.
-    private func persistSession(_ session: MomentSession) {
+    func persistSession(_ session: MomentSession) {
         let info = PersistedSessionInfo(
             id: session.id,
             startDate: session.startDate,
             location: session.location,
             isShared: session.isShared,
-            room: session.room
+            room: session.room,
+            isHost: session.isHost
         )
         if let data = try? JSONEncoder().encode(info) {
             UserDefaults.standard.set(data, forKey: kPersistedSessionKey)

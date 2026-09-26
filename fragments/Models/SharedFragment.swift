@@ -174,3 +174,48 @@ public struct SharedFragment: Identifiable, Hashable, Sendable, Codable {
         )
     }
 }
+
+// MARK: - Fragment -> SharedFragment Conversion
+
+extension Fragment {
+    /// Converts a local Fragment to a collaborative SharedFragment model.
+    @MainActor
+    public func toSharedFragment(
+        roomId: String,
+        authorId: String? = nil,
+        authorName: String? = nil
+    ) -> SharedFragment {
+        let resolvedAuthorId = authorId ?? UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        let resolvedAuthorName = authorName ?? ProfileManager.shared.signature
+
+        let mediaRef: SharedMediaReference? = {
+            if let path = mediaResourceName {
+                let url = URL(fileURLWithPath: path)
+                return SharedMediaReference(localFileURL: url, fileExtension: url.pathExtension)
+            }
+            return nil
+        }()
+
+        return SharedFragment(
+            id: id.uuidString,
+            roomId: roomId,
+            authorId: resolvedAuthorId,
+            authorName: resolvedAuthorName,
+            type: type,
+            createdAt: createdAt,
+            title: title,
+            subtitle: subtitle,
+            text: text,
+            mediaReference: mediaRef,
+            mediaSymbol: mediaSymbol,
+            location: location,
+            duration: duration,
+            audioWaveform: audioWaveform,
+            accentColorHex: gradientColors.first?.toRGBAString(),
+            phi: phi,
+            theta: theta,
+            radiusFactor: radiusFactor
+        )
+    }
+}
+

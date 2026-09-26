@@ -310,6 +310,7 @@ private extension MomentActivityAttributes.ContentState {
     )
 }
 
+#if false
 // Lock Screen / StandBy banner
 #Preview("Lock Screen", as: .content, using: MomentActivityAttributes.preview) {
     FragmentsLiveActivity()
@@ -341,3 +342,4 @@ private extension MomentActivityAttributes.ContentState {
     MomentActivityAttributes.ContentState.empty
     MomentActivityAttributes.ContentState.sample
 }
+#endif

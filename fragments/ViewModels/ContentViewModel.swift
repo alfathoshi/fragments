@@ -53,8 +53,10 @@ final class ContentViewModel {
     // Floating Capture Menu & Modals
     var isCaptureMenuOpen: Bool = false
     var showActiveMomentView: Bool = false
+    var showJoinSheet: Bool = false
     var showQuickCaptureSheet: Bool = false
     var showDiscardConfirmation: Bool = false
+    var showLeaveConfirmation: Bool = false
     var showResumeOrNewMomentAlert: Bool = false
     var showDiscardForQuickCaptureAlert: Bool = false
     var showStandaloneLimitAlert: Bool = false
@@ -77,12 +79,9 @@ final class ContentViewModel {
     func handleDeepLink(_ url: URL) {
         if url.scheme == "https" && url.host?.contains("icloud.com") == true {
             Task {
-                if let _ = try? await RoomManager.shared.acceptShare(with: url) {
+                if let room = try? await RoomManager.shared.acceptShare(with: url) {
                     await MainActor.run {
-                        withAnimation {
-                            selectedTab = .logs
-                            activeTab = .logs
-                        }
+                        handleJoinSharedMoment(room: room)
                     }
                 }
             }
@@ -162,15 +161,28 @@ final class ContentViewModel {
             let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? UUID().uuidString
             let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
             Task {
-                _ = await RoomManager.shared.joinRoomDirect(id: roomId, name: roomName)
-                await MainActor.run {
-                    withAnimation {
-                        selectedTab = .logs
-                        activeTab = .logs
+                if let shareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: roomId) {
+                    if let room = try? await RoomManager.shared.acceptShare(with: shareURL) {
+                        await MainActor.run {
+                            handleJoinSharedMoment(room: room)
+                        }
+                        return
                     }
+                }
+                let room = await RoomManager.shared.joinRoomDirect(id: roomId, name: roomName)
+                await MainActor.run {
+                    handleJoinSharedMoment(room: room)
                 }
             }
         }
+    }
+
+    func handleJoinSharedMoment(room: Room) {
+        if momentManager.isSessionActive {
+            momentManager.cancelSession()
+        }
+        momentManager.joinSharedSession(room: room)
+        showActiveMomentView = true
     }
 
     func handleFragmentCaptured(_ newFragment: Fragment) {
@@ -208,6 +220,10 @@ final class ContentViewModel {
 
     func discardMoment() {
         momentManager.cancelSession()
+    }
+
+    func leaveMoment() {
+        momentManager.leaveSession()
     }
 
     func resumeMoment() {

@@ -73,9 +73,11 @@ struct MomentsView: View {
     private var allMoments: [FolderCollection] {
         var result = viewModel.momentManager.collections
         let existingRoomIDs = Set(result.compactMap(\.roomID))
+        let activeRoomID = viewModel.momentManager.activeSession?.room?.id
 
         for room in RoomManager.shared.rooms {
-            if !existingRoomIDs.contains(room.id) {
+            // Exclude rooms already saved in collections and exclude the currently active session room
+            if !existingRoomIDs.contains(room.id) && room.id != activeRoomID {
                 let cachedFragments = (try? LocalRoomCache.shared.loadFragments(roomID: room.id)) ?? []
                 let items = cachedFragments.map { FolderItem(from: $0.toFragment()) }
                 let color = room.accentColorHex.map { Color.fromRGBAString($0) }
