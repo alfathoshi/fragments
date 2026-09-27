@@ -16,8 +16,14 @@ extension FragmentType: Codable, Sendable {}
 
 /// Reference describing media attached to a shared fragment in CloudKit and local cache.
 public struct SharedMediaReference: Hashable, Sendable, Codable {
-    /// The CloudKit record field key storing the CKAsset (e.g., "mediaAsset").
+    /// The CloudKit record field key storing the CKAsset (e.g., "mediaAsset") or Supabase Storage path.
     public var assetKey: String?
+
+    /// Canonical remote storage path identifier for Supabase Storage (aliases assetKey).
+    public var storagePath: String? {
+        get { assetKey }
+        set { assetKey = newValue }
+    }
 
     /// Local file URL where the asset is downloaded or cached on the current device.
     public var localFileURL: URL?
@@ -36,13 +42,14 @@ public struct SharedMediaReference: Hashable, Sendable, Codable {
 
     public init(
         assetKey: String? = nil,
+        storagePath: String? = nil,
         localFileURL: URL? = nil,
         remoteURL: URL? = nil,
         fileExtension: String? = nil,
         fileSize: Int64? = nil,
         mimeType: String? = nil
     ) {
-        self.assetKey = assetKey
+        self.assetKey = assetKey ?? storagePath
         self.localFileURL = localFileURL
         self.remoteURL = remoteURL
         self.fileExtension = fileExtension

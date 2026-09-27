@@ -60,7 +60,30 @@ struct fragmentsApp: App {
         }
         print("=== RESULT (PHASE 6): \(passed3 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
 
-        let allLogs = (logs1 + logs2 + logs3).joined(separator: "\n")
+        let (passed4, logs4) = SupabaseAuthVerifier.runAllTests()
+        print("=== SUPABASE AUTH FOUNDATION VERIFICATION (PHASE 2A) ===")
+        for log in logs4 {
+            print(log)
+        }
+        print("=== RESULT (PHASE 2A): \(passed4 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+        Task {
+            let (passed5, logs5) = await SupabaseRepositoryVerifier.runAllTests()
+            print("=== SUPABASE REPOSITORY VERIFICATION (PHASE 2B) ===")
+            for log in logs5 {
+                print(log)
+            }
+            print("=== RESULT (PHASE 2B): \(passed5 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+            let (passed6, logs6) = await SupabaseRealtimeVerifier.runAllTests()
+            print("=== SUPABASE REALTIME COORDINATOR VERIFICATION (PHASE 2C-1) ===")
+            for log in logs6 {
+                print(log)
+            }
+            print("=== RESULT (PHASE 2C-1): \(passed6 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+        }
+
+        let allLogs = (logs1 + logs2 + logs3 + logs4).joined(separator: "\n")
         let logPath = NSTemporaryDirectory() + "fragments_verification.log"
         try? allLogs.write(toFile: logPath, atomically: true, encoding: .utf8)
         #endif

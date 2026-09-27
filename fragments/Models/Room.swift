@@ -67,4 +67,35 @@ public struct Room: Identifiable, Hashable, Sendable, Codable {
         self.fragmentCount = fragmentCount
         self.accentColorHex = accentColorHex
     }
+
+    /// Identifies the remote synchronization backend responsible for this Room.
+    public var backend: RoomBackend {
+        if zoneName?.lowercased() == "supabase" {
+            return .supabase
+        }
+        return .cloudKit
+    }
+
+    /// Whether the currently signed-in user is the creator/owner of this Room.
+    @MainActor
+    public var isCurrentUserOwner: Bool {
+        if backend == .supabase {
+            let createdByLower = createdBy.lowercased()
+            if let sbUserId = SupabaseService.shared.currentUserID?.lowercased() {
+                if createdByLower == sbUserId { return true }
+            }
+            let localId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+            return createdBy == localId
+        } else {
+            let ckUserId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+            return createdBy == ckUserId
+        }
+    }
 }
+
+/// Defines the remote backend origin for collaborative Rooms.
+public enum RoomBackend: String, Codable, Sendable {
+    case cloudKit
+    case supabase
+}
+

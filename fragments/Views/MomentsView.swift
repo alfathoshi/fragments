@@ -332,9 +332,15 @@ public struct FolderDetailBottomSheet: View {
     /// Whether this shared moment is owned by someone else (user should "Leave" instead of "Delete")
     private var isSharedByOthers: Bool {
         guard collection.isShared, let roomID = collection.roomID else { return false }
-        let currentUserId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
-        if let room = RoomManager.shared.rooms.first(where: { $0.id == roomID }) {
-            return room.createdBy != currentUserId
+        if let room = RoomManager.shared.rooms.first(where: { $0.id == roomID })
+            ?? RoomManager.shared.currentRoom
+            ?? (MomentManager.shared.activeSession?.room?.id == roomID ? MomentManager.shared.activeSession?.room : nil) {
+            if room.id == roomID {
+                return !room.isCurrentUserOwner
+            }
+        }
+        if let cachedRoom = try? LocalRoomCache.shared.loadRoom(id: roomID) {
+            return !cachedRoom.isCurrentUserOwner
         }
         return false
     }
@@ -467,7 +473,7 @@ public struct FolderDetailBottomSheet: View {
                     if let onDelete = onDelete {
                         onDelete()
                     } else {
-                        MomentManager.shared.deleteMoment(id: collection.id)
+                        MomentManager.shared.deleteMoment(id: collection.id, roomID: collection.roomID)
                     }
                     dismiss()
                 }

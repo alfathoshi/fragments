@@ -256,6 +256,9 @@ final class MomentManager {
             if targetRoomID == nil { targetRoomID = collections[index].roomID }
             collections.remove(at: index)
         }
+        if let rID = targetRoomID {
+            collections.removeAll(where: { $0.roomID == rID })
+        }
 
         if let ctx = modelContext {
             let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
@@ -264,22 +267,30 @@ final class MomentManager {
                     if targetRoomID == nil { targetRoomID = item.roomID }
                     ctx.delete(item)
                 }
-                try? ctx.save()
             }
+            if let rID = targetRoomID {
+                let rDescriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.roomID == rID })
+                if let rMatchings = try? ctx.fetch(rDescriptor) {
+                    for item in rMatchings {
+                        ctx.delete(item)
+                    }
+                }
+            }
+            try? ctx.save()
         }
 
-        // Also purge from RoomManager and CloudKit if it's a Room!
+        // Also purge from RoomManager and remote backend (Supabase / CloudKit) if it's a Room!
         let resolvedRoomID = targetRoomID ?? (RoomManager.shared.rooms.contains(where: { $0.id == id.uuidString }) ? id.uuidString : nil)
-        if let rID = resolvedRoomID, RoomManager.shared.rooms.contains(where: { $0.id == rID }) {
+        if let rID = resolvedRoomID {
             Task {
                 try? await RoomManager.shared.deleteRoom(id: rID)
             }
         }
     }
 
-    /// Leaves a shared Moment without deleting the underlying CloudKit room.
+    /// Leaves a shared Moment without deleting the underlying room for the owner.
     /// Removes from local collections, SwiftData, and RoomManager's local list,
-    /// but does NOT delete the room from CloudKit so the owner retains their data.
+    /// and invokes remote leave (deleting membership in Supabase).
     func leaveMoment(id: UUID, roomID: String? = nil) {
         var targetRoomID: String? = roomID
 
@@ -287,6 +298,9 @@ final class MomentManager {
             if targetRoomID == nil { targetRoomID = collections[index].roomID }
             collections.remove(at: index)
         }
+        if let rID = targetRoomID {
+            collections.removeAll(where: { $0.roomID == rID })
+        }
 
         if let ctx = modelContext {
             let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
@@ -295,11 +309,19 @@ final class MomentManager {
                     if targetRoomID == nil { targetRoomID = item.roomID }
                     ctx.delete(item)
                 }
-                try? ctx.save()
             }
+            if let rID = targetRoomID {
+                let rDescriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.roomID == rID })
+                if let rMatchings = try? ctx.fetch(rDescriptor) {
+                    for item in rMatchings {
+                        ctx.delete(item)
+                    }
+                }
+            }
+            try? ctx.save()
         }
 
-        // Remove from RoomManager's local list and cache WITHOUT deleting from CloudKit
+        // Remove from RoomManager's local list and cache, and leave remotely on backend
         let resolvedRoomID = targetRoomID ?? (RoomManager.shared.rooms.contains(where: { $0.id == id.uuidString }) ? id.uuidString : nil)
         if let rID = resolvedRoomID {
             Task {
@@ -347,12 +369,21 @@ final class MomentManager {
         let roomId = UUID().uuidString
         let sessionStartDate = Date()
 
+        let optimisticCode = String(roomId.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
+        let creatorId: String = {
+            if SupabaseService.shared.isAuthenticated, let sbUserId = SupabaseService.shared.currentUserID {
+                return sbUserId
+            }
+            return UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        }()
         let optimisticRoom = Room(
             id: roomId,
             name: roomName,
             emoji: "✨",
             createdAt: sessionStartDate,
-            createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+            createdBy: creatorId,
+            shareRecordID: optimisticCode,
+            zoneName: SupabaseService.shared.isAuthenticated ? "supabase" : nil
         )
 
         // 1. Immediately launch the active session so UI transitions with 0ms latency
@@ -370,13 +401,14 @@ final class MomentManager {
         )
         MultipeerSyncService.shared.start(roomID: roomId, localMember: hostMember, isHost: true, sessionStartDate: sessionStartDate)
 
-        // 3. Asynchronously provision the Room in CloudKit in the background preserving the exact start date
+        // 3. Asynchronously provision the Room in Supabase (or CloudKit fallback) in background
         Task {
             if let provisionedRoom = try? await RoomManager.shared.createRoom(
                 id: roomId,
                 name: roomName,
                 emoji: "✨",
-                createdAt: sessionStartDate
+                createdAt: sessionStartDate,
+                backend: SupabaseService.shared.isAuthenticated ? .supabase : .cloudKit
             ) {
                 await MainActor.run {
                     if var current = self.activeSession, current.isShared, current.room?.id == roomId {
@@ -419,7 +451,7 @@ final class MomentManager {
             roomId: room.id,
             userId: currentId,
             displayName: currentName,
-            role: room.createdBy == currentId ? .owner : .member,
+            role: room.isCurrentUserOwner ? .owner : .member,
             joinedAt: Date()
         )
         MultipeerSyncService.shared.start(roomID: room.id, localMember: member, isHost: false, sessionStartDate: room.createdAt)
@@ -694,6 +726,10 @@ final class MomentManager {
     func leaveSession() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         hasLeftSession = true
+
+        let roomIDToLeave = activeSession?.room?.id
+        let sessionIDToLeave = activeSession?.id
+
         // Clear Multipeer callbacks to prevent delayed auto-save
         MultipeerSyncService.shared.onSessionEnded = nil
         MultipeerSyncService.shared.onFragmentReceived = nil
@@ -706,6 +742,37 @@ final class MomentManager {
         endLiveActivity()
         stopRemoteSyncObserver()
         MultipeerSyncService.shared.stop()
+
+        // 1. Remove from local collections if it was ever added
+        if let sessionID = sessionIDToLeave {
+            collections.removeAll { $0.id == sessionID || (roomIDToLeave != nil && $0.roomID == roomIDToLeave) }
+        } else if let rID = roomIDToLeave {
+            collections.removeAll { $0.roomID == rID }
+        }
+
+        // 2. Remove from SwiftData if present
+        if let ctx = modelContext {
+            if let sessionID = sessionIDToLeave {
+                let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == sessionID })
+                if let matchings = try? ctx.fetch(descriptor) {
+                    for item in matchings { ctx.delete(item) }
+                }
+            }
+            if let rID = roomIDToLeave {
+                let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.roomID == rID })
+                if let matchings = try? ctx.fetch(descriptor) {
+                    for item in matchings { ctx.delete(item) }
+                }
+            }
+            try? ctx.save()
+        }
+
+        // 3. Remove room from RoomManager and local cache, and notify remote backend (Supabase / CloudKit)
+        if let rID = roomIDToLeave {
+            Task {
+                await RoomManager.shared.leaveRoom(id: rID)
+            }
+        }
     }
 
     /// Finalizes and saves the shared moment collection into the member's device when the host saves the session.
@@ -767,8 +834,7 @@ final class MomentManager {
         MultipeerSyncService.shared.stop()
 
         if let session = sessionToCancel, session.isShared, let room = session.room {
-            let currentUserId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
-            if room.createdBy == currentUserId {
+            if room.isCurrentUserOwner {
                 Task {
                     try? await RoomManager.shared.deleteRoom(id: room.id)
                 }

@@ -87,6 +87,18 @@ public final class LocalRoomCache: Sendable {
         }
     }
 
+    /// Loads a single room by its ID from its individual cached directory or manifest.
+    public func loadRoom(id: String) throws -> Room? {
+        let roomURL = roomDirectory(for: id).appendingPathComponent("room.json")
+        if fileManager.fileExists(atPath: roomURL.path) {
+            if let data = try? Data(contentsOf: roomURL),
+               let room = try? decoder.decode(Room.self, from: data) {
+                return room
+            }
+        }
+        return try loadRooms().first(where: { $0.id == id })
+    }
+
     /// Saves a single room into the manifest and updates its individual `room.json`.
     public func saveRoom(_ room: Room) throws {
         ensureBaseDirectoryExists()

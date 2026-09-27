@@ -137,7 +137,7 @@ public struct RoomMembersSheet: View {
 
                             Spacer()
 
-                            Text(String(room.id.prefix(8)))
+                            Text(room.backend == .supabase ? (room.shareRecordID ?? String(room.id.prefix(6))) : String(room.id.prefix(8)))
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
@@ -225,6 +225,11 @@ public struct RoomMembersSheet: View {
     }
 
     private var effectiveShareURL: URL {
+        if room.backend == .supabase {
+            let code = room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
+            let encodedName = room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            return URL(string: "fragments://room/join?code=\(code)&name=\(encodedName)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
+        }
         if let url = resolvedShareURL ?? activeShare?.url {
             return url
         }
@@ -234,10 +239,18 @@ public struct RoomMembersSheet: View {
     }
 
     private var shareActivityItems: [Any] {
-        [effectiveShareURL]
+        if room.backend == .supabase {
+            let code = room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
+            return ["Join my shared moment \"\(room.name)\" on Fragments using room code: \(code)\n\(effectiveShareURL.absoluteString)"]
+        }
+        return [effectiveShareURL]
     }
 
     private func handleInviteTapped() {
+        if room.backend == .supabase {
+            isShowingShareSheet = true
+            return
+        }
         if resolvedShareURL != nil || (activeShare != nil && activeShare?.url != nil) {
             isShowingShareSheet = true
             return
@@ -281,7 +294,8 @@ public struct RoomMembersSheet: View {
     }
 
     private func handleCopyCode() {
-        UIPasteboard.general.string = room.id
+        let codeToCopy = room.backend == .supabase ? (room.shareRecordID ?? String(room.id.prefix(6))) : room.id
+        UIPasteboard.general.string = codeToCopy
         withAnimation(.easeInOut(duration: 0.2)) {
             copiedCode = true
         }
@@ -297,6 +311,14 @@ public struct RoomMembersSheet: View {
             isLoading = true
         }
         defer { isLoading = false }
+
+        if room.backend == .supabase {
+            let fetched = (try? await SupabaseRoomRepository.shared.fetchMembers(roomID: room.id)) ?? []
+            await MainActor.run {
+                self.members = fetched
+            }
+            return
+        }
 
         // 1. Fetch live share (or provision if not yet created)
         if let share = try? await roomRepo.getOrCreateShare(for: room) {
@@ -317,7 +339,7 @@ public struct RoomMembersSheet: View {
         // 3. Identify the current user
         let currentUserId = identityService.currentUserIdentity?.id ?? "local_user"
         let currentUserName = ProfileManager.shared.effectiveName
-        let isCurrentHost = (room.createdBy == currentUserId) || (MomentManager.shared.activeSession?.isHost ?? false)
+        let isCurrentHost = room.isCurrentUserOwner || (MomentManager.shared.activeSession?.isHost ?? false)
 
         // Collect all known CKShare participant record-names so we can cross-match
         var shareParticipantIDs: Set<String> = []

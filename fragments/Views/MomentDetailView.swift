@@ -29,15 +29,27 @@ public struct MomentDetailView: View {
     }
 
     private var resolvedRoom: Room {
-        if let roomID = collection.roomID, let found = RoomManager.shared.rooms.first(where: { $0.id == roomID }) {
-            return found
+        if let roomID = collection.roomID, let found = RoomManager.shared.rooms.first(where: { $0.id == roomID }) ?? RoomManager.shared.currentRoom {
+            if found.id == roomID {
+                return found
+            }
         }
+        if let roomID = collection.roomID, let cached = try? LocalRoomCache.shared.loadRoom(id: roomID) {
+            return cached
+        }
+        let creatorId: String = {
+            if SupabaseService.shared.isAuthenticated, let sbUserId = SupabaseService.shared.currentUserID {
+                return sbUserId
+            }
+            return UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        }()
         return Room(
             id: collection.roomID ?? collection.id.uuidString,
             name: collection.name,
             emoji: "👥",
             createdAt: collection.date,
-            createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+            createdBy: creatorId,
+            zoneName: SupabaseService.shared.isAuthenticated ? "supabase" : nil
         )
     }
 

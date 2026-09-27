@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5F2472D230694D0D00311DDE /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 5F2472D130694D0D00311DDE /* Supabase */; };
 		5FA8D133305A34F000870B8F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FA8D0F6305A337300870B8F /* WidgetKit.framework */; };
 		5FA8D134305A34F000870B8F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FA8D0F8305A337300870B8F /* SwiftUI.framework */; };
 		5FA8D143305A34F100870B8F /* FragmentsActivityExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5FA8D132305A34F000870B8F /* FragmentsActivityExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -92,6 +93,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F2472D230694D0D00311DDE /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,6 +159,7 @@
 			);
 			name = fragments;
 			packageProductDependencies = (
+				5F2472D130694D0D00311DDE /* Supabase */,
 			);
 			productName = fragments;
 			productReference = 5F35BCF6305461EE00663A7A /* fragments.app */;
@@ -211,6 +214,9 @@
 			);
 			mainGroup = 5F35BCED305461EE00663A7A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5F2472D030694D0D00311DDE /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5F35BCF7305461EE00663A7A /* Products */;
 			projectDirPath = "";
@@ -565,6 +571,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		5F2472D030694D0D00311DDE /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5F2472D130694D0D00311DDE /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5F2472D030694D0D00311DDE /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5F35BCEE305461EE00663A7A /* Project object */;
 }

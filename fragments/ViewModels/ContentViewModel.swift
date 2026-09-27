@@ -176,6 +176,17 @@ final class ContentViewModel {
             }
         } else if url.host == "room" || url.host == "join" {
             let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+            if let code = queryItems?.first(where: { $0.name == "code" })?.value,
+               code.trimmingCharacters(in: .whitespacesAndNewlines).count == 6 {
+                Task {
+                    if let room = try? await RoomManager.shared.joinRoom(code: code) {
+                        await MainActor.run {
+                            handleJoinSharedMoment(room: room)
+                        }
+                        return
+                    }
+                }
+            }
             let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? UUID().uuidString
             let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
             let createdAtDouble = queryItems?.first(where: { $0.name == "createdAt" })?.value.flatMap(Double.init)

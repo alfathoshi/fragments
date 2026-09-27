@@ -12,6 +12,7 @@ import Foundation
 /// Implementations must be independent from CloudKit network synchronization.
 public protocol RoomRepository: Sendable {
     func loadRooms() async throws -> [Room]
+    func loadRoom(id: String) async throws -> Room?
     func saveRoom(_ room: Room) async throws
     func saveRooms(_ rooms: [Room]) async throws
     func deleteRoom(id: String) async throws
@@ -21,6 +22,12 @@ public protocol RoomRepository: Sendable {
     func saveFragments(_ fragments: [SharedFragment], roomID: String) async throws
     func invalidateRoom(id: String) async throws
     func clearAll() async throws
+}
+
+public extension RoomRepository {
+    func loadRoom(id: String) async throws -> Room? {
+        try await loadRooms().first(where: { $0.id == id })
+    }
 }
 
 /// Concrete implementation of `RoomRepository` backed by `LocalRoomCache`.
@@ -33,6 +40,10 @@ public final class LocalRoomRepository: RoomRepository {
 
     public func loadRooms() async throws -> [Room] {
         try cache.loadRooms()
+    }
+
+    public func loadRoom(id: String) async throws -> Room? {
+        try cache.loadRoom(id: id)
     }
 
     public func saveRoom(_ room: Room) async throws {

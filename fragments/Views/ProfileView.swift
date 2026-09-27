@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PhotosUI
+import Supabase
 
 public struct ProfileView: View {
     @Environment(\.dismiss) private var dismiss
@@ -25,6 +26,7 @@ public struct ProfileView: View {
     @State private var showContactFallbackAlert = false
     @State private var showCopiedNotification = false
     @State private var showCloudKitDebug = false
+    @State private var supabaseService = SupabaseService.shared
 
     public init(profileManager: ProfileManager = ProfileManager.shared) {
         self.profileManager = profileManager
@@ -44,10 +46,13 @@ public struct ProfileView: View {
                     profileHeaderView
                         .padding(.top, 16)
 
-                    // 2. Sections: Rate Us, Contact Us, Privacy Policy
+                    // 2. Supabase Account & Remote Authentication
+                    supabaseAccountSectionView
+
+                    // 3. Sections: Rate Us, Contact Us, Privacy Policy
                     actionsSectionView
 
-                    // 3. Bottom: Made by Alfathoshi, App Icon, App Name & Copyright
+                    // 4. Bottom: Made by Alfathoshi, App Icon, App Name & Copyright
                     bottomAppIconView
                         .padding(.top, 12)
                         .padding(.bottom, 36)
@@ -200,7 +205,68 @@ public struct ProfileView: View {
         )
     }
 
-    // MARK: - 2. Action Section (Rate Us, Contact Us, Privacy Policy)
+    // MARK: - 2. Supabase Account Section
+    private var supabaseAccountSectionView: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(supabaseService.isAuthenticated ? Color.green.opacity(0.12) : Color.primary.opacity(0.06))
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: supabaseService.isAuthenticated ? "apple.logo" : "person.badge.key.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(supabaseService.isAuthenticated ? Color.green : Color.primary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(supabaseService.isAuthenticated ? "Connected to Supabase" : "Remote Identity")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.primary)
+
+                    if let user = supabaseService.currentUser {
+                        Text("UUID: \(user.id.uuidString.prefix(8))...")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Sign in to enable remote collaborative Moments")
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                if supabaseService.isAuthenticated {
+                    Button(role: .destructive) {
+                        triggerHaptic()
+                        Task {
+                            try? await supabaseService.signOut()
+                        }
+                    } label: {
+                        Text("Sign Out")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.red.opacity(0.1), in: Capsule())
+                    }
+                }
+            }
+
+            if !supabaseService.isAuthenticated {
+                SignInWithAppleView()
+                    .padding(.top, 4)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        )
+    }
+
+    // MARK: - 3. Action Section (Rate Us, Contact Us, Privacy Policy)
     private var actionsSectionView: some View {
         VStack(spacing: 0) {
             // Rate Us

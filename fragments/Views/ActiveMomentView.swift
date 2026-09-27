@@ -303,7 +303,9 @@ struct ActiveMomentView: View {
 
             if session.isShared, let room = session.room {
                 // Quick Room Code Tap-to-Copy Pill
-                let shortCode = String(room.id.prefix(8)).uppercased()
+                let shortCode = room.backend == .supabase
+                    ? (room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased())
+                    : String(room.id.prefix(8)).uppercased()
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     UIPasteboard.general.string = shortCode

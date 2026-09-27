@@ -213,7 +213,33 @@ public struct JoinRoomSheet: View {
                 return
             }
 
-            // Case 3: Raw Room Code / UUID / 8-char short code
+            // Case 3: 6-Character Supabase Room Code
+            if trimmed.count == 6 && !trimmed.contains("/") && !trimmed.contains(".") {
+                do {
+                    let room = try await roomManager.joinRoom(code: trimmed)
+                    await MainActor.run {
+                        isJoining = false
+                        onJoined?(room)
+                        dismiss()
+                    }
+                    return
+                } catch {
+                    if let sbError = error as? SupabaseRoomError {
+                        switch sbError {
+                        case .validationFailure(let msg):
+                            await MainActor.run {
+                                isJoining = false
+                                errorMessage = msg
+                            }
+                            return
+                        default:
+                            break
+                        }
+                    }
+                }
+            }
+
+            // Case 4: Legacy CloudKit Room Code / UUID / short code
             // 1. Try public lookup to resolve native CKShare URL (with automatic retry for newly created rooms)
             var resolvedShareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: trimmed)
             if resolvedShareURL == nil {
