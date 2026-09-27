@@ -19,8 +19,9 @@ public struct RoomDetailView: View {
     @State private var selectedFragment: SharedFragment? = nil
     @State private var showMembersSheet: Bool = false
     @State private var showCaptureSheet: Bool = false
-    @State private var showCloudShareSheet: Bool = false
+    @State private var showShareSheet: Bool = false
     @State private var activeShare: CKShare? = nil
+    @State private var resolvedShareURL: URL? = nil
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -36,6 +37,15 @@ public struct RoomDetailView: View {
             return Color.fromRGBAString(hex)
         }
         return Color.purple
+    }
+
+    private var effectiveShareURL: URL {
+        if let url = resolvedShareURL ?? activeShare?.url {
+            return url
+        }
+        let encodedName = room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let createdTimestamp = room.createdAt.timeIntervalSince1970
+        return URL(string: "fragments://room/join?id=\(room.id)&name=\(encodedName)&createdAt=\(createdTimestamp)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
     }
 
     public var body: some View {
@@ -97,11 +107,7 @@ public struct RoomDetailView: View {
                     // Share / Invite button
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        if let share = activeShare, share.url != nil {
-                            showCloudShareSheet = true
-                        } else {
-                            showMembersSheet = true
-                        }
+                        showShareSheet = true
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 15, weight: .semibold))
@@ -116,14 +122,8 @@ public struct RoomDetailView: View {
         .sheet(isPresented: $showMembersSheet) {
             RoomMembersSheet(room: room)
         }
-        .sheet(isPresented: $showCloudShareSheet) {
-            if let share = activeShare {
-                CloudSharingSheet(share: share) {
-                    Task {
-                        await roomManager.loadRoomDetails(roomID: room.id)
-                    }
-                }
-            }
+        .sheet(isPresented: $showShareSheet) {
+            ShareSheet(activityItems: [effectiveShareURL])
         }
         .fullScreenCover(isPresented: $showCaptureSheet) {
             // Reusing existing CaptureView with .room(room) context!
@@ -140,6 +140,14 @@ public struct RoomDetailView: View {
             await roomManager.loadRoomDetails(roomID: room.id)
             if let share = try? await CloudKitRoomRepository.shared.getOrCreateShare(for: room) {
                 self.activeShare = share
+                if let url = share.url {
+                    self.resolvedShareURL = url
+                }
+            }
+            if self.resolvedShareURL == nil {
+                if let lookupURL = await CloudKitRoomRepository.shared.lookupShareURL(for: room.id) {
+                    self.resolvedShareURL = lookupURL
+                }
             }
         }
     }

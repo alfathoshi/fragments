@@ -36,6 +36,7 @@ public enum CaptureMode: String, CaseIterable, Identifiable {
 
 public struct CaptureView: View {
     public var isActive: Bool = true
+    public var initialMode: CaptureMode = .photo
     public var onClose: (() -> Void)? = nil
     public var onEndActiveMoment: (() -> Void)? = nil
 
@@ -57,6 +58,7 @@ public struct CaptureView: View {
         onEndActiveMoment: (() -> Void)? = nil
     ) {
         self.isActive = isActive
+        self.initialMode = initialMode
         self._viewModel = State(initialValue: CaptureViewModel(
             initialMode: initialMode,
             activeMoment: activeMoment,
@@ -161,6 +163,21 @@ public struct CaptureView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(viewModel.limitAlertMessage)
+            }
+            .onAppear {
+                viewModel.selectedMode = initialMode
+            }
+            .onChange(of: initialMode) { _, newMode in
+                withAnimation(.easeInOut(duration: 0.20)) {
+                    viewModel.selectedMode = newMode
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SelectCaptureMode"))) { notif in
+                if let mode = notif.object as? CaptureMode {
+                    withAnimation(.easeInOut(duration: 0.20)) {
+                        viewModel.selectedMode = mode
+                    }
+                }
             }
             .ignoresSafeArea(edges: .bottom)
         }

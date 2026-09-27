@@ -74,20 +74,26 @@ public struct EndMomentSheet: View {
                                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                             viewModel.selectedCategory = cat
                                         } label: {
-                                            Text(cat)
-                                                .font(.system(size: 13, weight: viewModel.selectedCategory == cat ? .bold : .medium, design: .rounded))
-                                                .padding(.horizontal, 14)
-                                                .padding(.vertical, 8)
-                                                .background(
-                                                    viewModel.selectedCategory == cat
-                                                        ? AnyShapeStyle(Color.primary)
-                                                        : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
-                                                    in: Capsule()
-                                                )
-                                                .foregroundStyle(
-                                                    viewModel.selectedCategory == cat
-                                                    ? Color(uiColor: .systemBackground) : .primary
-                                                )
+                                            HStack(spacing: 6) {
+                                                if let symbol = MomentCategory.symbol(for: cat) {
+                                                    Image(systemName: symbol)
+                                                        .font(.system(size: 12, weight: .semibold))
+                                                }
+                                                Text(cat)
+                                                    .font(.system(size: 13, weight: viewModel.selectedCategory == cat ? .bold : .medium, design: .rounded))
+                                            }
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                viewModel.selectedCategory == cat
+                                                    ? AnyShapeStyle(Color.primary)
+                                                    : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
+                                                in: Capsule()
+                                            )
+                                            .foregroundStyle(
+                                                viewModel.selectedCategory == cat
+                                                ? Color(uiColor: .systemBackground) : .primary
+                                            )
                                         }
                                         .buttonStyle(PlainButtonStyle())
                                     }

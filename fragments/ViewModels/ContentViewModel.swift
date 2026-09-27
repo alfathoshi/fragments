@@ -29,7 +29,7 @@ final class ContentViewModel {
             let sampleRoom = Room(
                 id: "sample_shared_room",
                 name: "Bali Trip 2026",
-                emoji: "🌴",
+                emoji: "✨",
                 createdAt: Date(),
                 createdBy: "local_user",
                 memberCount: 3,
@@ -95,36 +95,53 @@ final class ContentViewModel {
         isCaptureMenuOpen = false
 
         if url.host == "end" {
-            // Dismiss any existing active moment cover first so we can cleanly open end sheet
-            showActiveMomentView = false
-            activeMomentInitialCaptureType = nil
-            activeMomentAutoOpenEnd = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.showActiveMomentView = true
+            if showActiveMomentView {
+                NotificationCenter.default.post(name: NSNotification.Name("RequestEndMoment"), object: nil)
+            } else {
+                activeMomentInitialCaptureType = nil
+                activeMomentAutoOpenEnd = true
+                showActiveMomentView = true
+            }
+        } else if url.host == "leave" {
+            if showActiveMomentView {
+                NotificationCenter.default.post(name: NSNotification.Name("RequestLeaveMoment"), object: nil)
+            } else {
+                showLeaveConfirmation = true
             }
         } else if url.host == "capture" {
             let modeParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?
                 .first(where: { $0.name == "mode" })?
-                .value ?? "photo"
+                .value?.lowercased() ?? "photo"
 
             let targetType: FragmentType
+            let targetMode: CaptureMode
             switch modeParam {
-            case "video": targetType = .video
-            case "note":  targetType = .note
-            case "audio", "memo": targetType = .audio
-            default:      targetType = .photo
+            case "video":
+                targetType = .video
+                targetMode = .video
+            case "note":
+                targetType = .note
+                targetMode = .note
+            case "audio", "memo":
+                targetType = .audio
+                targetMode = .memo
+            default:
+                targetType = .photo
+                targetMode = .photo
             }
 
             if momentManager.isSessionActive {
                 if (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
                     showMomentLimitAlert = true
                 } else {
-                    showActiveMomentView = false
-                    activeMomentAutoOpenEnd = false
-                    activeMomentInitialCaptureType = targetType
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        self.showActiveMomentView = true
+                    if showActiveMomentView {
+                        NotificationCenter.default.post(name: NSNotification.Name("OpenActiveMomentCapture"), object: targetType)
+                        NotificationCenter.default.post(name: NSNotification.Name("SelectCaptureMode"), object: targetMode)
+                    } else {
+                        activeMomentAutoOpenEnd = false
+                        activeMomentInitialCaptureType = targetType
+                        showActiveMomentView = true
                     }
                 }
             } else {
@@ -134,6 +151,7 @@ final class ContentViewModel {
                 } else {
                     quickCaptureInitialType = targetType
                     showQuickCaptureSheet = true
+                    NotificationCenter.default.post(name: NSNotification.Name("SelectCaptureMode"), object: targetMode)
                 }
             }
         } else if url.host == "moment" {
@@ -160,6 +178,8 @@ final class ContentViewModel {
             let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
             let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? UUID().uuidString
             let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
+            let createdAtDouble = queryItems?.first(where: { $0.name == "createdAt" })?.value.flatMap(Double.init)
+            let deepLinkCreatedAt = createdAtDouble != nil ? Date(timeIntervalSince1970: createdAtDouble!) : nil
             Task {
                 if let shareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: roomId) {
                     if let room = try? await RoomManager.shared.acceptShare(with: shareURL) {
@@ -169,7 +189,20 @@ final class ContentViewModel {
                         return
                     }
                 }
-                let room = await RoomManager.shared.joinRoomDirect(id: roomId, name: roomName)
+                if let room = try? await CloudKitRoomRepository.shared.fetchRoom(id: roomId) {
+                    _ = await RoomManager.shared.joinRoomDirect(id: room.id, name: room.name, createdAt: room.createdAt)
+                    await MainActor.run {
+                        handleJoinSharedMoment(room: room)
+                    }
+                    return
+                }
+                let resolvedInfo = await CloudKitRoomRepository.shared.lookupRoomInfo(for: roomId)
+                let resolvedCreatedAt = resolvedInfo?.createdAt ?? deepLinkCreatedAt
+                let room = await RoomManager.shared.joinRoomDirect(
+                    id: resolvedInfo?.id ?? roomId,
+                    name: resolvedInfo?.name ?? roomName,
+                    createdAt: resolvedCreatedAt
+                )
                 await MainActor.run {
                     handleJoinSharedMoment(room: room)
                 }

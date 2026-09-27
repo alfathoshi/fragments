@@ -10,6 +10,8 @@ import SwiftUI
 struct ActiveMomentView: View {
     var onDismiss: () -> Void
     var onSaveComplete: () -> Void
+    var initialCaptureType: FragmentType?
+    var autoOpenEnd: Bool
 
     @State private var viewModel: ActiveMomentViewModel
     @State private var copiedCodeFeedback: Bool = false
@@ -25,6 +27,8 @@ struct ActiveMomentView: View {
     ) {
         self.onDismiss = onDismiss
         self.onSaveComplete = onSaveComplete
+        self.initialCaptureType = initialCaptureType
+        self.autoOpenEnd = autoOpenEnd
         self._viewModel = State(initialValue: ActiveMomentViewModel(
             momentManager: momentManager,
             initialCaptureType: initialCaptureType,
@@ -247,6 +251,34 @@ struct ActiveMomentView: View {
         }
         .onAppear {
             viewModel.startSyncObserver()
+            if let initType = initialCaptureType {
+                viewModel.openCaptureSheet(type: initType)
+            } else if autoOpenEnd {
+                viewModel.showEndMomentSheet = true
+            }
+        }
+        .onChange(of: initialCaptureType) { _, newType in
+            if let newType {
+                viewModel.openCaptureSheet(type: newType)
+            }
+        }
+        .onChange(of: autoOpenEnd) { _, shouldOpenEnd in
+            if shouldOpenEnd {
+                viewModel.showEndMomentSheet = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenActiveMomentCapture"))) { notif in
+            if let type = notif.object as? FragmentType {
+                viewModel.openCaptureSheet(type: type)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RequestEndMoment"))) { _ in
+            viewModel.showCaptureSheet = false
+            viewModel.showEndMomentSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RequestLeaveMoment"))) { _ in
+            viewModel.showCaptureSheet = false
+            showLeaveConfirmation = true
         }
         .onDisappear {
             viewModel.stopSyncObserver()

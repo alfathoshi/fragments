@@ -123,9 +123,10 @@ public final class CloudKitRoomRepository: Sendable {
 
     /// Publishes a mapping from `roomID` to `shareURL` in the public database,
     /// enabling participants to join seamlessly by entering just the Room Code.
-    public func publishShareLookup(roomID: String, shareURL: URL, name: String) async {
+    public func publishShareLookup(roomID: String, shareURL: URL, name: String, createdAt: Date? = nil) async {
         guard let publicDB else { return }
         let shortCode = String(roomID.prefix(8)).uppercased()
+        let resolvedCreatedAt = createdAt ?? Date()
 
         // 1. Save with full room ID
         let recordID = CKRecord.ID(recordName: "Lookup_\(roomID)")
@@ -134,6 +135,7 @@ public final class CloudKitRoomRepository: Sendable {
         record["roomName"] = name as CKRecordValue
         record["roomID"] = roomID as CKRecordValue
         record["shortCode"] = shortCode as CKRecordValue
+        record["createdAt"] = resolvedCreatedAt as CKRecordValue
         _ = try? await publicDB.save(record)
 
         // 2. Also save by shortCode directly as recordName so NO query index is ever needed
@@ -143,6 +145,7 @@ public final class CloudKitRoomRepository: Sendable {
         shortRecord["roomName"] = name as CKRecordValue
         shortRecord["roomID"] = roomID as CKRecordValue
         shortRecord["shortCode"] = shortCode as CKRecordValue
+        shortRecord["createdAt"] = resolvedCreatedAt as CKRecordValue
         _ = try? await publicDB.save(shortRecord)
     }
 
@@ -183,9 +186,9 @@ public final class CloudKitRoomRepository: Sendable {
         return nil
     }
 
-    /// Resolves full room ID and room name from the public database using a room code,
+    /// Resolves full room ID, room name, and start timestamp from the public database using a room code,
     /// enabling fallback collaboration to link directly to the correct room.
-    public func lookupRoomInfo(for code: String) async -> (id: String, name: String)? {
+    public func lookupRoomInfo(for code: String) async -> (id: String, name: String, createdAt: Date?)? {
         guard let publicDB else { return nil }
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         let shortCode = String(trimmed.prefix(8)).uppercased()
@@ -195,7 +198,8 @@ public final class CloudKitRoomRepository: Sendable {
         if let record = try? await publicDB.record(for: shortRecordID) {
             let rID = (record["roomID"] as? String) ?? trimmed
             let rName = (record["roomName"] as? String) ?? "Shared Moment"
-            return (rID, rName)
+            let rCreatedAt = record["createdAt"] as? Date
+            return (rID, rName, rCreatedAt)
         }
 
         // 2. Try Lookup_<trimmed>
@@ -203,7 +207,8 @@ public final class CloudKitRoomRepository: Sendable {
         if let record = try? await publicDB.record(for: fullRecordID) {
             let rID = (record["roomID"] as? String) ?? trimmed
             let rName = (record["roomName"] as? String) ?? "Shared Moment"
-            return (rID, rName)
+            let rCreatedAt = record["createdAt"] as? Date
+            return (rID, rName, rCreatedAt)
         }
 
         return nil
@@ -244,12 +249,14 @@ public final class CloudKitRoomRepository: Sendable {
     ///   - name: The human-readable name of the room.
     ///   - emoji: An emoji representing the room.
     ///   - accentColorHex: Optional theme color hex.
+    ///   - createdAt: Optional creation date of the room/moment (defaults to now).
     /// - Returns: A tuple containing the created `Room` and initialized `CKShare`.
     public func createRoom(
         id: String? = nil,
         name: String,
         emoji: String = "✨",
-        accentColorHex: String? = nil
+        accentColorHex: String? = nil,
+        createdAt: Date? = nil
     ) async throws -> (Room, CKShare) {
         guard let currentIdentity = await UserIdentityService.shared.currentUserIdentity else {
             throw CloudKitRoomError.unauthenticated
@@ -262,11 +269,12 @@ public final class CloudKitRoomRepository: Sendable {
         try await ensureZoneExists(zoneID: roomZoneID)
 
         // 2. Prepare domain Room model
+        let initialCreatedAt = createdAt ?? Date()
         var room = Room(
             id: roomID,
             name: name,
             emoji: emoji,
-            createdAt: Date(),
+            createdAt: initialCreatedAt,
             createdBy: currentIdentity.id,
             shareRecordID: nil,
             zoneName: roomZoneID.zoneName,
@@ -330,7 +338,7 @@ public final class CloudKitRoomRepository: Sendable {
 
         if let url = savedShare.url {
             Task {
-                await self.publishShareLookup(roomID: roomID, shareURL: url, name: name)
+                await self.publishShareLookup(roomID: roomID, shareURL: url, name: name, createdAt: initialCreatedAt)
             }
         }
 
@@ -505,7 +513,7 @@ public final class CloudKitRoomRepository: Sendable {
         if let existing = try await fetchShare(for: room) {
             if let url = existing.url {
                 Task {
-                    await self.publishShareLookup(roomID: room.id, shareURL: url, name: room.name)
+                    await self.publishShareLookup(roomID: room.id, shareURL: url, name: room.name, createdAt: room.createdAt)
                 }
             }
             return existing
@@ -517,7 +525,8 @@ public final class CloudKitRoomRepository: Sendable {
                 id: room.id,
                 name: room.name,
                 emoji: room.emoji,
-                accentColorHex: room.accentColorHex
+                accentColorHex: room.accentColorHex,
+                createdAt: room.createdAt
             )
             return share
         } catch {
@@ -525,7 +534,7 @@ public final class CloudKitRoomRepository: Sendable {
             let recheck = try? await fetchShare(for: room)
             if let url = recheck?.url {
                 Task {
-                    await self.publishShareLookup(roomID: room.id, shareURL: url, name: room.name)
+                    await self.publishShareLookup(roomID: room.id, shareURL: url, name: room.name, createdAt: room.createdAt)
                 }
             }
             return recheck

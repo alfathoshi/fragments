@@ -22,7 +22,8 @@ struct FragmentsLiveActivity: Widget {
             LockScreenBannerView(
                 startDate: context.attributes.startDate,
                 fragmentCount: context.state.fragmentCount,
-                location: context.state.location
+                location: context.state.location,
+                isOwner: context.state.isOwner
             )
             .activityBackgroundTint(Color.black)
             .activitySystemActionForegroundColor(.white)
@@ -84,29 +85,40 @@ struct FragmentsLiveActivity: Widget {
                         
                        
 
-                        // 5 circular action buttons
+                        // 5 action buttons
                         HStack(spacing: 12) {
                             HStack(spacing: 16) {
                                 Link(destination: URL(string: "fragments://capture?mode=photo")!) {
-                                    IslandCircleButton(icon: "photo", color: Color(white: 0.18))
+                                    IslandCircleButton(icon: "camera.fill", color: Color(white: 0.18))
                                 }
                                 Link(destination: URL(string: "fragments://capture?mode=video")!) {
                                     IslandCircleButton(icon: "video.fill", color: Color(white: 0.18))
                                 }
                                 Link(destination: URL(string: "fragments://capture?mode=note")!) {
-                                    IslandCircleButton(icon: "text.quote", color: Color(white: 0.18))
+                                    IslandCircleButton(icon: "square.and.pencil", color: Color(white: 0.18))
                                 }
-                                Link(destination: URL(string: "fragments://capture?mode=audio")!) {
+                                Link(destination: URL(string: "fragments://capture?mode=memo")!) {
                                     IslandCircleButton(icon: "waveform", color: Color(white: 0.18))
                                 }
                             }
-                            Link(destination: URL(string: "fragments://end")!) {
-                                Text("End")
-                                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 14)
-                                    .background(Color.red, in: Capsule())
+                            if context.state.isOwner {
+                                Link(destination: URL(string: "fragments://end")!) {
+                                    Text("End")
+                                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 14)
+                                        .background(Color.red, in: Capsule())
+                                }
+                            } else {
+                                Link(destination: URL(string: "fragments://leave")!) {
+                                    Text("Leave")
+                                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 14)
+                                        .background(Color.red, in: Capsule())
+                                }
                             }
                         }
                     }
@@ -204,6 +216,7 @@ private struct LockScreenBannerView: View {
     let startDate: Date
     let fragmentCount: Int
     let location: String
+    var isOwner: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -243,29 +256,40 @@ private struct LockScreenBannerView: View {
                 }
             }
 
-            // Bottom: 5 circular shortcut buttons
+            // Bottom: 5 action buttons
             HStack(spacing: 12) {
                 HStack(spacing: 16) {
                     Link(destination: URL(string: "fragments://capture?mode=photo")!) {
-                        IslandCircleButton(icon: "photo", color: Color(white: 0.18))
+                        IslandCircleButton(icon: "camera.fill", color: Color(white: 0.18))
                     }
                     Link(destination: URL(string: "fragments://capture?mode=video")!) {
                         IslandCircleButton(icon: "video.fill", color: Color(white: 0.18))
                     }
                     Link(destination: URL(string: "fragments://capture?mode=note")!) {
-                        IslandCircleButton(icon: "text.quote", color: Color(white: 0.18))
+                        IslandCircleButton(icon: "square.and.pencil", color: Color(white: 0.18))
                     }
-                    Link(destination: URL(string: "fragments://capture?mode=audio")!) {
+                    Link(destination: URL(string: "fragments://capture?mode=memo")!) {
                         IslandCircleButton(icon: "waveform", color: Color(white: 0.18))
                     }
                 }
-                Link(destination: URL(string: "fragments://end")!) {
-                    Text("End")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.red, in: Capsule())
+                if isOwner {
+                    Link(destination: URL(string: "fragments://end")!) {
+                        Text("End")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.red, in: Capsule())
+                    }
+                } else {
+                    Link(destination: URL(string: "fragments://leave")!) {
+                        Text("Leave")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.red, in: Capsule())
+                    }
                 }
             }
         }
@@ -295,18 +319,21 @@ private struct LockScreenCircleButton: View {
 private extension MomentActivityAttributes {
     static let preview = MomentActivityAttributes(
         startDate: Date(),
-        sessionID: UUID().uuidString
+        sessionID: UUID().uuidString,
+        isOwner: true
     )
 }
 
 private extension MomentActivityAttributes.ContentState {
     static let sample = MomentActivityAttributes.ContentState(
         fragmentCount: 13,
-        location: "Jakarta, ID"
+        location: "Jakarta, ID",
+        isOwner: true
     )
     static let empty = MomentActivityAttributes.ContentState(
         fragmentCount: 0,
-        location: "Current Location"
+        location: "Current Location",
+        isOwner: true
     )
 }
 

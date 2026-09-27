@@ -125,17 +125,20 @@ final class MomentManager {
         // Restore session metadata from UserDefaults
         if let data = UserDefaults.standard.data(forKey: kPersistedSessionKey),
            let info = try? JSONDecoder().decode(PersistedSessionInfo.self, from: data) {
-            // Note: fragments captured before termination are lost (they were in-memory only).
-            // The session banner is restored so the user can End or Continue normally.
-            activeSession = MomentSession(
+            let cached = info.room != nil ? ((try? LocalRoomCache.shared.loadFragments(roomID: info.room!.id))?.map { $0.toFragment() } ?? []) : []
+            let restored = MomentSession(
                 id: info.id,
                 startDate: info.startDate,
-                fragments: [],
+                fragments: cached,
                 location: info.location,
                 isShared: info.isShared ?? false,
                 room: info.room,
                 isHost: info.isHost ?? true
             )
+            activeSession = restored
+            if restored.isShared, let room = restored.room {
+                startRemoteSyncObserver(roomID: room.id)
+            }
         }
     }
 
@@ -274,6 +277,37 @@ final class MomentManager {
         }
     }
 
+    /// Leaves a shared Moment without deleting the underlying CloudKit room.
+    /// Removes from local collections, SwiftData, and RoomManager's local list,
+    /// but does NOT delete the room from CloudKit so the owner retains their data.
+    func leaveMoment(id: UUID, roomID: String? = nil) {
+        var targetRoomID: String? = roomID
+
+        if let index = collections.firstIndex(where: { $0.id == id }) {
+            if targetRoomID == nil { targetRoomID = collections[index].roomID }
+            collections.remove(at: index)
+        }
+
+        if let ctx = modelContext {
+            let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
+            if let matchings = try? ctx.fetch(descriptor) {
+                for item in matchings {
+                    if targetRoomID == nil { targetRoomID = item.roomID }
+                    ctx.delete(item)
+                }
+                try? ctx.save()
+            }
+        }
+
+        // Remove from RoomManager's local list and cache WITHOUT deleting from CloudKit
+        let resolvedRoomID = targetRoomID ?? (RoomManager.shared.rooms.contains(where: { $0.id == id.uuidString }) ? id.uuidString : nil)
+        if let rID = resolvedRoomID {
+            Task {
+                await RoomManager.shared.leaveRoom(id: rID)
+            }
+        }
+    }
+
     /// Adds a saved Moment directly
     func addCollection(_ collection: FolderCollection) {
         if !collections.contains(where: { $0.id == collection.id }) {
@@ -291,8 +325,9 @@ final class MomentManager {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         hasLeftSession = false
         let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
+        let sessionStartDate = room?.createdAt ?? Date()
         let newSession = MomentSession(
-            startDate: Date(),
+            startDate: sessionStartDate,
             fragments: [],
             location: resolvedLocation,
             isShared: isShared,
@@ -310,19 +345,20 @@ final class MomentManager {
         let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
         let roomName = "Moment in \(resolvedLocation)"
         let roomId = UUID().uuidString
+        let sessionStartDate = Date()
 
         let optimisticRoom = Room(
             id: roomId,
             name: roomName,
-            emoji: "🌴",
-            createdAt: Date(),
+            emoji: "✨",
+            createdAt: sessionStartDate,
             createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
         )
 
         // 1. Immediately launch the active session so UI transitions with 0ms latency
         startSession(location: resolvedLocation, isShared: true, room: optimisticRoom)
 
-        // 2. Start zero-config local P2P sync as Host
+        // 2. Start zero-config local P2P sync as Host with the shared session start date
         let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
         let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
         let hostMember = RoomMember(
@@ -332,14 +368,15 @@ final class MomentManager {
             role: .owner,
             joinedAt: Date()
         )
-        MultipeerSyncService.shared.start(roomID: roomId, localMember: hostMember, isHost: true)
+        MultipeerSyncService.shared.start(roomID: roomId, localMember: hostMember, isHost: true, sessionStartDate: sessionStartDate)
 
-        // 3. Asynchronously provision the Room in CloudKit in the background
+        // 3. Asynchronously provision the Room in CloudKit in the background preserving the exact start date
         Task {
             if let provisionedRoom = try? await RoomManager.shared.createRoom(
                 id: roomId,
                 name: roomName,
-                emoji: "🌴"
+                emoji: "✨",
+                createdAt: sessionStartDate
             ) {
                 await MainActor.run {
                     if var current = self.activeSession, current.isShared, current.room?.id == roomId {
@@ -350,6 +387,9 @@ final class MomentManager {
                 }
             }
         }
+
+        // 4. Start continuous remote live sync across internet / different networks
+        startRemoteSyncObserver(roomID: roomId)
     }
 
     /// Joins an existing collaborative Shared Moment session in progress
@@ -372,7 +412,7 @@ final class MomentManager {
         persistSession(session)
         startLiveActivity(session: session)
 
-        // Start zero-config local P2P sync as Joiner
+        // 1. Start zero-config local P2P sync as Joiner
         let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
         let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
         let member = RoomMember(
@@ -382,7 +422,10 @@ final class MomentManager {
             role: room.createdBy == currentId ? .owner : .member,
             joinedAt: Date()
         )
-        MultipeerSyncService.shared.start(roomID: room.id, localMember: member, isHost: false)
+        MultipeerSyncService.shared.start(roomID: room.id, localMember: member, isHost: false, sessionStartDate: room.createdAt)
+
+        // 2. Start continuous remote live sync across internet / different networks
+        startRemoteSyncObserver(roomID: room.id)
 
         // Asynchronously pull remote fragments from CloudKit in background
         Task {
@@ -478,10 +521,100 @@ final class MomentManager {
             return session.fragments.map { $0.toSharedFragment(roomId: room.id) }
         }
 
-        MultipeerSyncService.shared.onSessionEnded = { [weak self] finalTitle in
+        MultipeerSyncService.shared.onSessionEnded = { [weak self] finalTitle, finalCategory in
             guard let self = self, !self.hasLeftSession, let session = self.activeSession, !session.isHost else { return }
-            self.finishSessionAsMember(finalTitle: finalTitle)
+            self.finishSessionAsMember(finalTitle: finalTitle, category: finalCategory ?? "Life")
         }
+
+        MultipeerSyncService.shared.onSessionStartDateReceived = { [weak self] hostStartDate in
+            guard let self = self else { return }
+            self.updateSessionStartDate(hostStartDate)
+        }
+    }
+
+    /// Synchronizes the shared moment start date across members to match the owner
+    func updateSessionStartDate(_ newStartDate: Date) {
+        guard var current = activeSession, current.isShared, !current.isHost else { return }
+        guard abs(current.startDate.timeIntervalSince(newStartDate)) > 0.5 else { return }
+        print("⏱️ [MomentManager] Synchronized start date to owner: \(newStartDate)")
+        current.startDate = newStartDate
+        if var r = current.room {
+            r.createdAt = newStartDate
+            current.room = r
+            try? LocalRoomCache.shared.saveRoom(r)
+        }
+        self.activeSession = current
+        self.persistSession(current)
+        self.startLiveActivity(session: current)
+    }
+
+    // MARK: - Remote Background Synchronization Engine
+    private var remoteSyncTask: Task<Void, Never>? = nil
+
+    /// Starts a continuous background sync engine that keeps active shared moments updated
+    /// over the internet / cellular networks regardless of which screen or view is currently open.
+    func startRemoteSyncObserver(roomID: String) {
+        stopRemoteSyncObserver()
+        remoteSyncTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self = self, let current = self.activeSession, current.isShared, current.room?.id == roomID else {
+                    break
+                }
+
+                // 1. If we are a member, check if host ended the session remotely
+                if !current.isHost {
+                    let (isEnded, finalTitle) = await CloudKitRoomRepository.shared.checkRoomEndedPublicRelay(roomID: roomID)
+                    if isEnded {
+                        await MainActor.run {
+                            guard !self.hasLeftSession, self.activeSession != nil else { return }
+                            self.finishSessionAsMember(finalTitle: finalTitle ?? "Shared Moment")
+                        }
+                        break
+                    }
+
+                    // 2. Sync room creation / start date if host provisioned it
+                    if let cloudRoom = try? await CloudKitRoomRepository.shared.fetchRoom(id: roomID) {
+                        await MainActor.run {
+                            self.updateSessionStartDate(cloudRoom.createdAt)
+                        }
+                    }
+                }
+
+                // 3. Fetch remote fragments from CloudKit / Public Relay
+                if let liveFragments = try? await CloudKitRoomRepository.shared.fetchFragments(roomID: roomID) {
+                    let domainFragments = liveFragments.map { $0.toFragment() }
+                    await MainActor.run {
+                        guard var session = self.activeSession, session.isShared, session.room?.id == roomID else { return }
+                        var updated = session.fragments
+                        var hasNew = false
+                        for frag in domainFragments {
+                            if !updated.contains(where: { $0.id == frag.id }) {
+                                updated.append(frag)
+                                hasNew = true
+                            }
+                        }
+                        if hasNew {
+                            session.fragments = updated
+                            self.activeSession = session
+                            self.persistSession(session)
+                            self.updateLiveActivity(session: session)
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            if let room = session.room {
+                                try? LocalRoomCache.shared.saveFragments(session.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+                            }
+                        }
+                    }
+                }
+
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    /// Stops the remote background synchronization engine.
+    func stopRemoteSyncObserver() {
+        remoteSyncTask?.cancel()
+        remoteSyncTask = nil
     }
 
     /// Prompts the End Moment sheet to name & categorize the session
@@ -514,7 +647,8 @@ final class MomentManager {
             items: folderItems,
             color: color,
             isShared: session.isShared,
-            roomID: session.room?.id
+            roomID: session.room?.id,
+            category: category
         )
 
         withAnimation(.spring(response: 0.42, dampingFraction: 0.76)) {
@@ -549,6 +683,7 @@ final class MomentManager {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         clearPersistedSession()
         endLiveActivity()
+        stopRemoteSyncObserver()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             MultipeerSyncService.shared.stop()
         }
@@ -562,12 +697,14 @@ final class MomentManager {
         // Clear Multipeer callbacks to prevent delayed auto-save
         MultipeerSyncService.shared.onSessionEnded = nil
         MultipeerSyncService.shared.onFragmentReceived = nil
+        MultipeerSyncService.shared.onSessionStartDateReceived = nil
         withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
             activeSession = nil
             showEndMomentSheet = false
         }
         clearPersistedSession()
         endLiveActivity()
+        stopRemoteSyncObserver()
         MultipeerSyncService.shared.stop()
     }
 
@@ -591,7 +728,8 @@ final class MomentManager {
             items: folderItems,
             color: color,
             isShared: true,
-            roomID: session.room?.id
+            roomID: session.room?.id,
+            category: category
         )
 
         withAnimation(.spring(response: 0.42, dampingFraction: 0.76)) {
@@ -610,6 +748,7 @@ final class MomentManager {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         clearPersistedSession()
         endLiveActivity()
+        stopRemoteSyncObserver()
         MultipeerSyncService.shared.stop()
         return newCollection
     }
@@ -624,6 +763,7 @@ final class MomentManager {
         }
         clearPersistedSession()
         endLiveActivity()
+        stopRemoteSyncObserver()
         MultipeerSyncService.shared.stop()
 
         if let session = sessionToCancel, session.isShared, let room = session.room {
@@ -676,11 +816,13 @@ final class MomentManager {
 
         let attributes = MomentActivityAttributes(
             startDate: session.startDate,
-            sessionID: session.id.uuidString
+            sessionID: session.id.uuidString,
+            isOwner: session.isHost
         )
         let initialState = MomentActivityAttributes.ContentState(
             fragmentCount: session.fragmentCount,
-            location: session.location
+            location: session.location,
+            isOwner: session.isHost
         )
 
         do {
@@ -700,7 +842,8 @@ final class MomentManager {
         guard let activity = liveActivity else { return }
         let updatedState = MomentActivityAttributes.ContentState(
             fragmentCount: session.fragmentCount,
-            location: session.location
+            location: session.location,
+            isOwner: session.isHost
         )
         Task {
             await activity.update(.init(state: updatedState, staleDate: nil))

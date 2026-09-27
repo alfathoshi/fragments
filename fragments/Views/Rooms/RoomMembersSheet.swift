@@ -17,8 +17,8 @@ public struct RoomMembersSheet: View {
 
     @State private var members: [RoomMember] = []
     @State private var activeShare: CKShare? = nil
+    @State private var resolvedShareURL: URL? = nil
     @State private var isShowingShareSheet: Bool = false
-    @State private var isShowingFallbackShareSheet: Bool = false
     @State private var isPreparingShare: Bool = false
     @State private var copiedLink: Bool = false
     @State private var copiedCode: Bool = false
@@ -39,7 +39,7 @@ public struct RoomMembersSheet: View {
                 // Room info header section
                 Section {
                     HStack(spacing: 14) {
-                        Text(room.emoji)
+                        Image(systemName: "sparkles")
                             .font(.system(size: 32))
                             .frame(width: 52, height: 52)
                             .background(Color.primary.opacity(0.06), in: Circle())
@@ -160,15 +160,7 @@ public struct RoomMembersSheet: View {
                 }
             }
             .sheet(isPresented: $isShowingShareSheet) {
-                if let share = activeShare {
-                    CloudSharingSheet(share: share) {
-                        Task { await loadData() }
-                    }
-                }
-            }
-            .sheet(isPresented: $isShowingFallbackShareSheet) {
-                let shareText = activeShare?.url?.absoluteString ?? "fragments://room/join?id=\(room.id)&name=\(room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-                ShareSheet(activityItems: [shareText])
+                ShareSheet(activityItems: shareActivityItems)
             }
             .task {
                 await loadData()
@@ -232,37 +224,51 @@ public struct RoomMembersSheet: View {
         .padding(.vertical, 3)
     }
 
+    private var effectiveShareURL: URL {
+        if let url = resolvedShareURL ?? activeShare?.url {
+            return url
+        }
+        let encodedName = room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let createdTimestamp = room.createdAt.timeIntervalSince1970
+        return URL(string: "fragments://room/join?id=\(room.id)&name=\(encodedName)&createdAt=\(createdTimestamp)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
+    }
+
+    private var shareActivityItems: [Any] {
+        [effectiveShareURL]
+    }
+
     private func handleInviteTapped() {
-        if let share = activeShare, share.url != nil {
+        if resolvedShareURL != nil || (activeShare != nil && activeShare?.url != nil) {
             isShowingShareSheet = true
             return
         }
 
         isPreparingShare = true
         Task {
-            let share = try? await roomRepo.getOrCreateShare(for: room)
+            if let share = try? await roomRepo.getOrCreateShare(for: room) {
+                await MainActor.run {
+                    self.activeShare = share
+                    if let url = share.url {
+                        self.resolvedShareURL = url
+                    }
+                }
+            }
+            if self.resolvedShareURL == nil {
+                if let lookupURL = await roomRepo.lookupShareURL(for: room.id) {
+                    await MainActor.run {
+                        self.resolvedShareURL = lookupURL
+                    }
+                }
+            }
             await MainActor.run {
                 self.isPreparingShare = false
-                if let share = share, share.url != nil {
-                    self.activeShare = share
-                    self.isShowingShareSheet = true
-                } else {
-                    // CloudKit share URL not yet generated (e.g. unauthenticated simulator)
-                    // Fallback to presenting the system share sheet with direct room URL
-                    self.activeShare = share
-                    self.isShowingFallbackShareSheet = true
-                }
+                self.isShowingShareSheet = true
             }
         }
     }
 
     private func handleCopyLink() {
-        let linkToCopy: String
-        if let url = activeShare?.url?.absoluteString {
-            linkToCopy = url
-        } else {
-            linkToCopy = "fragments://room/join?id=\(room.id)&name=\(room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-        }
+        let linkToCopy = effectiveShareURL.absoluteString
         UIPasteboard.general.string = linkToCopy
         withAnimation(.easeInOut(duration: 0.2)) {
             copiedLink = true
@@ -295,6 +301,14 @@ public struct RoomMembersSheet: View {
         // 1. Fetch live share (or provision if not yet created)
         if let share = try? await roomRepo.getOrCreateShare(for: room) {
             self.activeShare = share
+            if let url = share.url {
+                self.resolvedShareURL = url
+            }
+        }
+        if self.resolvedShareURL == nil {
+            if let lookupURL = await roomRepo.lookupShareURL(for: room.id) {
+                self.resolvedShareURL = lookupURL
+            }
         }
 
         // 2. Fetch members from CloudKit custom zone + public relay

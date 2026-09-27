@@ -15,7 +15,7 @@ public struct CreateRoomSheet: View {
     public var onRoomCreated: (Room) -> Void
 
     @State private var name: String = ""
-    @State private var selectedEmoji: String = "🌴"
+    @State private var selectedEmoji: String = "✨"
     @State private var selectedColorHex: String = "#A855F7" // Soft Purple
     @State private var isCreating: Bool = false
     @State private var errorMessage: String? = nil

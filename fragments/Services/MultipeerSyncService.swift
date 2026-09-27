@@ -29,6 +29,7 @@ public struct MultipeerPacket: Codable, Sendable {
     public let fragmentsList: [SharedFragment]?
     public let finalTitle: String?
     public let finalCategory: String?
+    public let sessionStartDate: Date?
 
     public init(
         type: MultipeerMessageType,
@@ -39,7 +40,8 @@ public struct MultipeerPacket: Codable, Sendable {
         mediaExtension: String? = nil,
         fragmentsList: [SharedFragment]? = nil,
         finalTitle: String? = nil,
-        finalCategory: String? = nil
+        finalCategory: String? = nil,
+        sessionStartDate: Date? = nil
     ) {
         self.type = type
         self.roomID = roomID
@@ -50,6 +52,7 @@ public struct MultipeerPacket: Codable, Sendable {
         self.fragmentsList = fragmentsList
         self.finalTitle = finalTitle
         self.finalCategory = finalCategory
+        self.sessionStartDate = sessionStartDate
     }
 }
 
@@ -80,11 +83,13 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
     public var onMemberReceived: ((RoomMember) -> Void)?
     public var onSyncRequest: (() -> [SharedFragment])?
     public var onConnectionChange: ((Int) -> Void)?
-    public var onSessionEnded: ((_ finalTitle: String) -> Void)?
+    public var onSessionEnded: ((_ finalTitle: String, _ finalCategory: String?) -> Void)?
+    public var onSessionStartDateReceived: ((Date) -> Void)?
 
     // MARK: - Internal Multipeer Objects
 
     public private(set) var isHost: Bool = false
+    public private(set) var sessionStartDate: Date? = nil
     private var localPeerID: MCPeerID?
     private var session: MCSession?
     private var advertiser: MCNearbyServiceAdvertiser?
@@ -100,13 +105,14 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
     // MARK: - Lifecycle
 
     /// Starts advertising and browsing for peers participating in the specified collaborative room.
-    public func start(roomID: String, localMember: RoomMember, isHost: Bool = false) {
+    public func start(roomID: String, localMember: RoomMember, isHost: Bool = false, sessionStartDate: Date? = nil) {
         stop()
 
         stateLock.lock()
         self.currentRoomID = roomID
         self.currentLocalMember = localMember
         self.isHost = isHost
+        self.sessionStartDate = sessionStartDate
         self.isRunning = true
         stateLock.unlock()
 
@@ -162,6 +168,7 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
         localPeerID = nil
         currentRoomID = nil
         currentLocalMember = nil
+        sessionStartDate = nil
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -195,7 +202,8 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
             roomID: roomID,
             fragment: fragment,
             mediaBase64: base64,
-            mediaExtension: fileExt
+            mediaExtension: fileExt,
+            sessionStartDate: isHost ? sessionStartDate : nil
         )
 
         self.sendPacket(packet)
@@ -207,7 +215,8 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
         let packet = MultipeerPacket(
             type: .handshake,
             roomID: roomID,
-            member: member
+            member: member,
+            sessionStartDate: isHost ? sessionStartDate : nil
         )
         sendPacket(packet, to: [peer])
     }
@@ -241,6 +250,13 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
     private func handleReceivedPacket(_ packet: MultipeerPacket, from peer: MCPeerID) {
         guard packet.roomID == currentRoomID || packet.roomID.prefix(8) == currentRoomID?.prefix(8) else {
             return
+        }
+
+        // If the packet carries the host's moment start date, sync it immediately
+        if let hostStartDate = packet.sessionStartDate, !isHost {
+            DispatchQueue.main.async { [weak self] in
+                self?.onSessionStartDateReceived?(hostStartDate)
+            }
         }
 
         switch packet.type {
@@ -277,11 +293,13 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
             }
 
         case .syncRequest:
-            if let allFragments = onSyncRequest?(), !allFragments.isEmpty, let roomID = currentRoomID {
+            if let roomID = currentRoomID {
+                let allFragments = onSyncRequest?() ?? []
                 let response = MultipeerPacket(
                     type: .syncResponse,
                     roomID: roomID,
-                    fragmentsList: allFragments
+                    fragmentsList: allFragments,
+                    sessionStartDate: isHost ? sessionStartDate : nil
                 )
                 sendPacket(response, to: [peer])
             }
@@ -297,8 +315,9 @@ public final class MultipeerSyncService: NSObject, @unchecked Sendable {
 
         case .sessionEnded:
             let title = packet.finalTitle ?? "Shared Moment"
+            let cat = packet.finalCategory
             DispatchQueue.main.async { [weak self] in
-                self?.onSessionEnded?(title)
+                self?.onSessionEnded?(title, cat)
             }
         }
     }

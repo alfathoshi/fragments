@@ -27,17 +27,6 @@ public struct JoinRoomSheet: View {
     public var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 24) {
-                // Header prompt
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Join Shared Moment")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
-
-                    Text("Paste a share link or a Room ID to start collaborating.")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 12)
 
                 // Input Box with Paste Button
                 VStack(spacing: 10) {
@@ -46,7 +35,7 @@ public struct JoinRoomSheet: View {
                             .font(.system(size: 16))
                             .foregroundStyle(.secondary)
 
-                        TextField("Paste link or enter Room Code...", text: $inputCode)
+                        TextField("Paste link or enter room code...", text: $inputCode)
                             .font(.system(size: 15, design: .rounded))
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
@@ -121,13 +110,7 @@ public struct JoinRoomSheet: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
+            .navigationTitle("Join with Code")
         }
     }
 
@@ -176,6 +159,8 @@ public struct JoinRoomSheet: View {
                 let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
                 let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? ""
                 let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
+                let createdAtDouble = queryItems?.first(where: { $0.name == "createdAt" })?.value.flatMap(Double.init)
+                let deepLinkCreatedAt = createdAtDouble != nil ? Date(timeIntervalSince1970: createdAtDouble!) : nil
 
                 if !roomId.isEmpty {
                     // Try looking up public CKShare URL first to mount CloudKit zone
@@ -192,13 +177,38 @@ public struct JoinRoomSheet: View {
                             print("⚠️ Failed to accept share via resolved URL: \(error.localizedDescription)")
                         }
                     }
+
+                    // Try fetching the room directly from CloudKit
+                    if let room = try? await CloudKitRoomRepository.shared.fetchRoom(id: roomId) {
+                        _ = await roomManager.joinRoomDirect(id: room.id, name: room.name, createdAt: room.createdAt)
+                        await MainActor.run {
+                            isJoining = false
+                            onJoined?(room)
+                            dismiss()
+                        }
+                        return
+                    }
+
+                    // Fallback: resolve from Public Cloud Relay or direct deep link with owner's start timestamp
+                    let resolvedInfo = await CloudKitRoomRepository.shared.lookupRoomInfo(for: roomId)
+                    let resolvedCreatedAt = resolvedInfo?.createdAt ?? deepLinkCreatedAt
+                    let room = await roomManager.joinRoomDirect(
+                        id: resolvedInfo?.id ?? roomId,
+                        name: resolvedInfo?.name ?? roomName,
+                        createdAt: resolvedCreatedAt
+                    )
+                    await MainActor.run {
+                        isJoining = false
+                        onJoined?(room)
+                        dismiss()
+                    }
+                    return
                 }
 
-                let room = await roomManager.joinRoomDirect(id: roomId.isEmpty ? UUID().uuidString : roomId, name: roomName)
+                // Room not found via deep link
                 await MainActor.run {
                     isJoining = false
-                    onJoined?(room)
-                    dismiss()
+                    errorMessage = "No room found with that link. Please check and try again."
                 }
                 return
             }
@@ -227,7 +237,7 @@ public struct JoinRoomSheet: View {
 
             // 2. Try fetching room directly from CloudKit if already accepted or accessible
             if let room = try? await CloudKitRoomRepository.shared.fetchRoom(id: trimmed) {
-                _ = await roomManager.joinRoomDirect(id: room.id, name: room.name)
+                _ = await roomManager.joinRoomDirect(id: room.id, name: room.name, createdAt: room.createdAt)
                 await MainActor.run {
                     isJoining = false
                     onJoined?(room)
@@ -238,10 +248,16 @@ public struct JoinRoomSheet: View {
 
             // 3. Fallback: Lookup exact room ID and name from Public Cloud Relay
             let resolvedInfo = await CloudKitRoomRepository.shared.lookupRoomInfo(for: trimmed)
-            let finalRoomID = resolvedInfo?.id ?? trimmed
-            let finalRoomName = resolvedInfo?.name ?? "Shared Moment"
 
-            let room = await roomManager.joinRoomDirect(id: finalRoomID, name: finalRoomName)
+            guard let resolvedInfo else {
+                await MainActor.run {
+                    isJoining = false
+                    errorMessage = "No room found with that code. Please check and try again."
+                }
+                return
+            }
+
+            let room = await roomManager.joinRoomDirect(id: resolvedInfo.id, name: resolvedInfo.name, createdAt: resolvedInfo.createdAt)
             await MainActor.run {
                 isJoining = false
                 onJoined?(room)

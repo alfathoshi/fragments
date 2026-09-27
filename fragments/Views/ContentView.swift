@@ -279,10 +279,12 @@ struct ContentView: View {
         } message: {
             Text("A moment can contain a maximum of 15 fragments. You have reached the limit for this moment.")
         }
-        .sheet(isPresented: $viewModel.showJoinSheet) {
+        .sheet(isPresented: $viewModel.showJoinSheet, ) {
             JoinRoomSheet { joinedRoom in
                 viewModel.handleJoinSharedMoment(room: joinedRoom)
             }
+            .presentationDetents([.height(300), .large])
+            .presentationDragIndicator(.visible)
         }
         .onAppear {
             viewModel.setModelContext(modelContext)

@@ -18,6 +18,7 @@ public struct FolderCollection: Identifiable, Hashable {
     public var color: Color?
     public var isShared: Bool
     public var roomID: String?
+    public var category: String
 
     public init(
         id: UUID = UUID(),
@@ -27,7 +28,8 @@ public struct FolderCollection: Identifiable, Hashable {
         items: [FolderItem],
         color: Color? = nil,
         isShared: Bool = false,
-        roomID: String? = nil
+        roomID: String? = nil,
+        category: String = "Life"
     ) {
         self.id = id
         self.name = name
@@ -37,6 +39,7 @@ public struct FolderCollection: Identifiable, Hashable {
         self.color = color
         self.isShared = isShared
         self.roomID = roomID
+        self.category = category
     }
 
     public var fragmentCountText: String {
@@ -90,7 +93,8 @@ struct MomentsView: View {
                     items: items,
                     color: color,
                     isShared: true,
-                    roomID: room.id
+                    roomID: room.id,
+                    category: "Friends"
                 )
                 result.append(collection)
             }
@@ -141,6 +145,11 @@ struct MomentsView: View {
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
                                 viewModel.momentManager.deleteMoment(id: collection.id, roomID: collection.roomID)
                             }
+                        },
+                        onLeave: {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                                viewModel.momentManager.leaveMoment(id: collection.id, roomID: collection.roomID)
+                            }
                         }
                     )
                 }
@@ -189,6 +198,7 @@ struct MomentsView: View {
                                 size: CGSize(width: 168, height: 166),
                                 isShared: collection.isShared,
                                 folderColor: collection.color,
+                                category: collection.category,
                                 onTapFolder: {
                                     viewModel.handleMomentSelection(collection)
                                 },
@@ -309,6 +319,7 @@ public struct FolderDetailBottomSheet: View {
     public let collection: FolderCollection
     public var onUpdateColor: ((Color?) -> Void)? = nil
     public var onDelete: (() -> Void)? = nil
+    public var onLeave: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var folderColor: Color?
     @State private var showColorPicker = false
@@ -316,15 +327,28 @@ public struct FolderDetailBottomSheet: View {
     @State private var isFolderOpen = false
     @State private var sheetDetent: PresentationDetent = .fraction(0.38)
     @State private var showDeleteConfirmation = false
+    @State private var showLeaveConfirmation = false
+
+    /// Whether this shared moment is owned by someone else (user should "Leave" instead of "Delete")
+    private var isSharedByOthers: Bool {
+        guard collection.isShared, let roomID = collection.roomID else { return false }
+        let currentUserId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        if let room = RoomManager.shared.rooms.first(where: { $0.id == roomID }) {
+            return room.createdBy != currentUserId
+        }
+        return false
+    }
 
     public init(
         collection: FolderCollection,
         onUpdateColor: ((Color?) -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() -> Void)? = nil,
+        onLeave: (() -> Void)? = nil
     ) {
         self.collection = collection
         self.onUpdateColor = onUpdateColor
         self.onDelete = onDelete
+        self.onLeave = onLeave
         self._folderColor = State(initialValue: collection.color)
     }
 
@@ -341,6 +365,7 @@ public struct FolderDetailBottomSheet: View {
                             isLocked: true,
                             isShared: collection.isShared,
                             folderColor: folderColor,
+                            category: collection.category,
                             onTapItem: { item in
                                 selectedFragment = item
                             }
@@ -354,8 +379,17 @@ public struct FolderDetailBottomSheet: View {
                     // METADATA & INFORMATION SECTION
                     VStack(alignment: .leading, spacing: 18) {
 
-                        // 2. Metadata Grid (Fragments, Location, Date & Time)
+                        // 2. Metadata Grid (Fragments, Location, Date & Time, Category)
                         VStack(spacing: 14) {
+                            if let symbol = MomentCategory.symbol(for: collection.category) {
+                                metadataRow(
+                                    icon: symbol,
+                                    iconColor: .primary,
+                                    title: "Category",
+                                    value: collection.category
+                                )
+                            }
+
                             metadataRow(
                                 icon: "square.stack.3d.up.fill",
                                 iconColor: .primary,
@@ -403,15 +437,27 @@ public struct FolderDetailBottomSheet: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(role: .destructive) {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        showDeleteConfirmation = true
-                    } label: {
-                        Image(systemName: "trash.fill")
-                            .font(.system(size: 20))
+                    if isSharedByOthers {
+                        Button(role: .destructive) {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            showLeaveConfirmation = true
+                        } label: {
+                            Image(systemName: "rectangle.portrait.and.arrow.right.fill")
+                                .font(.system(size: 20))
+                        }
+                        .tint(.red)
+                        .accessibilityLabel("Leave moment")
+                    } else {
+                        Button(role: .destructive) {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            showDeleteConfirmation = true
+                        } label: {
+                            Image(systemName: "trash.fill")
+                                .font(.system(size: 20))
+                        }
+                        .tint(.red)
+                        .accessibilityLabel("Delete moment")
                     }
-                    .tint(.red)
-                    .accessibilityLabel("Delete moment")
                 }
             }
             .alert("Delete Moment?", isPresented: $showDeleteConfirmation) {
@@ -427,6 +473,20 @@ public struct FolderDetailBottomSheet: View {
                 }
             } message: {
                 Text("Are you sure you want to delete \"\(collection.name)\"? This action cannot be undone.")
+            }
+            .alert("Leave Moment?", isPresented: $showLeaveConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Leave", role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    if let onLeave = onLeave {
+                        onLeave()
+                    } else {
+                        MomentManager.shared.leaveMoment(id: collection.id, roomID: collection.roomID)
+                    }
+                    dismiss()
+                }
+            } message: {
+                Text("Are you sure you want to leave \"\(collection.name)\"? The moment will be removed from your device but will remain for the owner.")
             }
             .blur(radius: showColorPicker ? 16 : 0)
             .animation(.easeInOut(duration: 0.28), value: showColorPicker)

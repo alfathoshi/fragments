@@ -16,6 +16,7 @@ public struct MomentFolder<CardContent: View>: View {
     public var isLocked: Bool
     public var isShared: Bool
     public var folderColor: Color?
+    public var category: String?
     public var onTapFolder: (() -> Void)?
     public var onTapItem: ((FolderItem) -> Void)?
     public var cardBuilder: ((FolderItem, Int) -> CardContent)?
@@ -38,6 +39,7 @@ public struct MomentFolder<CardContent: View>: View {
         isLocked: Bool = false,
         isShared: Bool = false,
         folderColor: Color? = nil,
+        category: String? = nil,
         onTapFolder: (() -> Void)? = nil,
         onTapItem: ((FolderItem) -> Void)? = nil,
         @ViewBuilder cardBuilder: @escaping (FolderItem, Int) -> CardContent
@@ -48,6 +50,7 @@ public struct MomentFolder<CardContent: View>: View {
         self.isLocked = isLocked
         self.isShared = isShared
         self.folderColor = folderColor
+        self.category = category
         self.onTapFolder = onTapFolder
         self.onTapItem = onTapItem
         self.cardBuilder = cardBuilder
@@ -61,6 +64,7 @@ public struct MomentFolder<CardContent: View>: View {
         isLocked: Bool = false,
         isShared: Bool = false,
         folderColor: Color? = nil,
+        category: String? = nil,
         onTapFolder: (() -> Void)? = nil,
         onTapItem: ((FolderItem) -> Void)? = nil
     ) where CardContent == DefaultFolderCardView {
@@ -70,6 +74,7 @@ public struct MomentFolder<CardContent: View>: View {
         self.isLocked = isLocked
         self.isShared = isShared
         self.folderColor = folderColor
+        self.category = category
         self.onTapFolder = onTapFolder
         self.onTapItem = onTapItem
         self.cardBuilder = { item, index in
@@ -441,6 +446,19 @@ public struct MomentFolder<CardContent: View>: View {
                         )
                 )
 
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let symbol = categoryBadgeSymbol {
+                folderBadge(
+                    symbol: symbol,
+                    rotation: 6,
+                    accessibilityLabel: "\(category ?? "Category") Moment"
+                )
+                .padding(.leading, size.width * 0.095)
+                .padding(.bottom, size.height * 0.095)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
             if isShared {
                 sharedFolderBadge
                     .padding(.trailing, size.width * 0.065)
@@ -458,40 +476,64 @@ public struct MomentFolder<CardContent: View>: View {
         .frame(width: size.width, height: coverHeight)
     }
 
-    // MARK: - Shared Folder Badge
+    // MARK: - Folder Badges
 
-    /// Crisp person.2.fill badge with white stroke outline and solid black silhouette,
-    /// positioned at the bottom-right of the front frosted flap matching reference design.
-    private var sharedFolderBadge: some View {
+    /// Resolves SF Symbol for the folder's category
+    private var categoryBadgeSymbol: String? {
+        guard let cat = category, !cat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return MomentCategory.symbol(for: cat)
+    }
+
+    /// Generic badge renderer with multi-directional white stroke outline and fill matching folderColor,
+    /// creating a vibrant, tactile sticker aesthetic.
+    private func folderBadge(
+        symbol: String,
+        fillColor: Color? = nil,
+        rotation: Double = 0,
+        accessibilityLabel: String
+    ) -> some View {
         let iconSize = size.width * 0.225
         let strokeRadius: CGFloat = 2.8
+        let badgeFill = fillColor ?? folderColor ?? Color.black
 
         return ZStack {
             // White stroke outline: dense multi-directional sampling for continuous coverage
             ForEach(0..<24, id: \.self) { i in
                 let angle = Double(i) * (2.0 * .pi / 24.0)
-                Image(systemName: "person.2.fill")
+                Image(systemName: symbol)
                     .font(.system(size: iconSize, weight: .bold))
                     .foregroundStyle(Color.white)
                     .offset(x: cos(angle) * strokeRadius, y: sin(angle) * strokeRadius)
             }
             ForEach(0..<16, id: \.self) { i in
                 let angle = Double(i) * (2.0 * .pi / 16.0)
-                Image(systemName: "person.2.fill")
+                Image(systemName: symbol)
                     .font(.system(size: iconSize, weight: .bold))
                     .foregroundStyle(Color.white)
                     .offset(x: cos(angle) * (strokeRadius * 0.55), y: sin(angle) * (strokeRadius * 0.55))
             }
 
-            // Core solid black fill matching reference design
-            Image(systemName: "person.2.fill")
+            // Core fill matching folder color (or black fallback when default/nil)
+            Image(systemName: symbol)
                 .font(.system(size: iconSize, weight: .bold))
-                .foregroundStyle(Color.black)
+                .foregroundStyle(badgeFill)
         }
-        .rotationEffect(.degrees(-6))
+        .rotationEffect(.degrees(rotation))
         .shadow(color: Color.black.opacity(0.22), radius: 3.5, x: 0, y: 2)
         .allowsHitTesting(false)
-        .accessibilityLabel("Shared Moment")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// Crisp person.2.fill badge with white stroke outline and folderColor fill,
+    /// positioned at the bottom-right of the front frosted flap matching reference design.
+    private var sharedFolderBadge: some View {
+        folderBadge(
+            symbol: "person.2.fill",
+            rotation: -6,
+            accessibilityLabel: "Shared Moment"
+        )
     }
 
     // MARK: - Helper Closed Coordinates

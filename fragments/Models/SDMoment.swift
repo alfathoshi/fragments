@@ -106,6 +106,7 @@ public final class SDMoment {
     public var orderedItemIDs: [String] = []
     public var isShared: Bool = false
     public var roomID: String? = nil
+    public var category: String? = nil
     
     @Relationship(deleteRule: .cascade, inverse: \SDMomentItem.moment)
     public var items: [SDMomentItem]
@@ -119,7 +120,8 @@ public final class SDMoment {
         items: [SDMomentItem] = [],
         orderedItemIDs: [String] = [],
         isShared: Bool = false,
-        roomID: String? = nil
+        roomID: String? = nil,
+        category: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -130,6 +132,7 @@ public final class SDMoment {
         self.orderedItemIDs = orderedItemIDs
         self.isShared = isShared
         self.roomID = roomID
+        self.category = category
     }
 
     public convenience init(from collection: FolderCollection) {
@@ -144,7 +147,8 @@ public final class SDMoment {
             items: sdItems,
             orderedItemIDs: orderIDs,
             isShared: collection.isShared,
-            roomID: collection.roomID
+            roomID: collection.roomID,
+            category: collection.category
         )
     }
 
@@ -174,7 +178,8 @@ public final class SDMoment {
             items: folderItems,
             color: color,
             isShared: isShared,
-            roomID: roomID
+            roomID: roomID,
+            category: category ?? "Life"
         )
     }
 

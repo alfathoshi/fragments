@@ -20,6 +20,8 @@ struct MomentActivityAttributes: ActivityAttributes {
         var fragmentCount: Int
         /// Human-readable location name (e.g. "Jakarta, ID")
         var location: String
+        /// Indicates whether current user is owner/host (shows End) or member (shows Leave)
+        var isOwner: Bool = true
     }
 
     // MARK: - Static Data (set once at session start)
@@ -27,4 +29,6 @@ struct MomentActivityAttributes: ActivityAttributes {
     var startDate: Date
     /// Unique identifier for the session (so we can find the right activity to update).
     var sessionID: String
+    /// Indicates whether current user is owner/host (shows End) or member (shows Leave)
+    var isOwner: Bool = true
 }

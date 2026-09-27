@@ -159,7 +159,8 @@ public final class RoomManager {
         id: String? = nil,
         name: String,
         emoji: String = "✨",
-        accentColorHex: String? = nil
+        accentColorHex: String? = nil,
+        createdAt: Date? = nil
     ) async throws -> Room {
         isLoading = true
         defer { isLoading = false }
@@ -169,7 +170,8 @@ public final class RoomManager {
                 id: id,
                 name: name,
                 emoji: emoji,
-                accentColorHex: accentColorHex
+                accentColorHex: accentColorHex,
+                createdAt: createdAt
             )
 
             // Update state
@@ -190,7 +192,7 @@ public final class RoomManager {
                 id: roomId,
                 name: name,
                 emoji: emoji,
-                createdAt: Date(),
+                createdAt: createdAt ?? Date(),
                 createdBy: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user",
                 shareRecordID: nil,
                 zoneName: "RoomZone_\(roomId)",
@@ -271,6 +273,16 @@ public final class RoomManager {
         }
     }
 
+    /// Removes a room from the local device only, without deleting it from CloudKit.
+    /// Used when a non-owner wants to leave a shared moment.
+    public func leaveRoom(id: String) async {
+        rooms.removeAll { $0.id == id }
+        if currentRoom?.id == id {
+            currentRoom = nil
+        }
+        try? await localRepository.deleteRoom(id: id)
+    }
+
     /// Accepts an incoming CloudKit share or join URL, adds the room to observable rooms, and caches it locally.
     public func acceptShare(with url: URL) async throws -> Room {
         isLoading = true
@@ -306,16 +318,26 @@ public final class RoomManager {
     }
 
     /// Joins a room directly by ID (used for direct local/simulator test links).
-    public func joinRoomDirect(id: String, name: String) async -> Room {
+    public func joinRoomDirect(id: String, name: String, createdAt: Date? = nil) async -> Room {
         if let existing = rooms.first(where: { $0.id == id }) {
+            if let createdAt = createdAt, abs(existing.createdAt.timeIntervalSince(createdAt)) > 0.5 {
+                var updated = existing
+                updated.createdAt = createdAt
+                if let idx = rooms.firstIndex(where: { $0.id == id }) {
+                    rooms[idx] = updated
+                }
+                self.currentRoom = updated
+                try? await localRepository.saveRoom(updated)
+                return updated
+            }
             self.currentRoom = existing
             return existing
         }
         let joinedRoom = Room(
             id: id,
             name: name,
-            emoji: "🌴",
-            createdAt: Date(),
+            emoji: "✨",
+            createdAt: createdAt ?? Date(),
             createdBy: "shared_host",
             memberCount: 2
         )

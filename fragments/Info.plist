@@ -13,16 +13,14 @@
 			</array>
 		</dict>
 	</array>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Fragments uses your local network to discover and live-sync shared moments with nearby friends.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_frag-sync._tcp</string>
 		<string>_frag-sync._udp</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
 	</array>
 </dict>
 </plist>
