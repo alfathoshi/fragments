@@ -17,6 +17,7 @@ import SwiftUI
 /// 4. Duplicate Realtime events are cleanly reconciled without duplicating fragments in activeSession.
 /// 5. UPDATE and DELETE events incrementally modify activeSession.fragments.
 /// 6. Ending, leaving, or cancelling sessions tears down the Realtime observer without restarting CloudKit polling.
+#if DEBUG
 @MainActor
 public enum RealtimeConvergenceVerifier {
 
@@ -181,3 +182,4 @@ public enum RealtimeConvergenceVerifier {
         return (passed: allPassed, log: logs)
     }
 }
+#endif

@@ -55,14 +55,12 @@ final class MomentManager {
         activeSession != nil
     }
 
-    #if DEBUG
     var isRemoteSyncTaskActive: Bool {
         remoteSyncTask != nil
     }
     var isSupabaseRealtimeTaskActive: Bool {
         supabaseRealtimeTask != nil
     }
-    #endif
 
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
