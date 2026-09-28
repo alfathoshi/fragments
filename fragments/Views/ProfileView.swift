@@ -230,7 +230,7 @@ public struct ProfileView: View {
             // Rate Us
             actionRow(
                 icon: "star.fill",
-                iconColor: colorScheme == .dark ? Color.black : Color.white,
+                iconColor: .primary,
                 title: "Rate Us",
                 disclosureIcon: "arrow.up.forward"
             ) {
@@ -246,7 +246,7 @@ public struct ProfileView: View {
             // Contact Us
             actionRow(
                 icon: "envelope.fill",
-                iconColor: colorScheme == .dark ? Color.black : Color.white,
+                iconColor: .primary,
                 title: "Contact Us",
                 subtitle: "fraqmentsapp@gmail.com",
                 disclosureIcon: "arrow.up.forward"
@@ -261,7 +261,7 @@ public struct ProfileView: View {
             // Privacy Policy
             actionRow(
                 icon: "hand.raised.fill",
-                iconColor: colorScheme == .dark ? Color.black : Color.white,
+                iconColor: .primary,
                 title: "Privacy Policy",
                 disclosureIcon: "arrow.up.forward"
             ) {
@@ -332,7 +332,7 @@ public struct ProfileView: View {
                         .overlay(
                             Image(systemName: icon)
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(iconColor == .primary ? (colorScheme == .dark ? Color.black : Color.white) : Color.white)
                         )
                 }
                 
