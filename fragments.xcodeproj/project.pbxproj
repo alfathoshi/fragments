@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5F2472D230694D0D00311DDE /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 5F2472D130694D0D00311DDE /* Supabase */; };
 		5FA8D133305A34F000870B8F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FA8D0F6305A337300870B8F /* WidgetKit.framework */; };
 		5FA8D134305A34F000870B8F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5FA8D0F8305A337300870B8F /* SwiftUI.framework */; };
 		5FA8D143305A34F100870B8F /* FragmentsActivityExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5FA8D132305A34F000870B8F /* FragmentsActivityExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -92,6 +93,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5F2472D230694D0D00311DDE /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,6 +159,7 @@
 			);
 			name = fragments;
 			packageProductDependencies = (
+				5F2472D130694D0D00311DDE /* Supabase */,
 			);
 			productName = fragments;
 			productReference = 5F35BCF6305461EE00663A7A /* fragments.app */;
@@ -211,6 +214,9 @@
 			);
 			mainGroup = 5F35BCED305461EE00663A7A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5F2472D030694D0D00311DDE /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5F35BCF7305461EE00663A7A /* Products */;
 			projectDirPath = "";
@@ -277,8 +283,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = fragments/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Fragments;
+				INFOPLIST_KEY_CFBundleDisplayName = Fraqments;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Fragments requires camera access to capture photos and videos for your moments.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Fragments uses your local network to discover and live-sync shared moments with nearby friends.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Fragments uses your location to automatically tag captured fragments and moments with your current location.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fragments requires microphone access to record audio for videos and voice memos.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
@@ -292,7 +299,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alfathoshi.fragments;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -319,8 +326,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = fragments/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Fragments;
+				INFOPLIST_KEY_CFBundleDisplayName = Fraqments;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Fragments requires camera access to capture photos and videos for your moments.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Fragments uses your local network to discover and live-sync shared moments with nearby friends.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Fragments uses your location to automatically tag captured fragments and moments with your current location.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fragments requires microphone access to record audio for videos and voice memos.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
@@ -334,7 +342,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.alfathoshi.fragments;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -563,6 +571,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		5F2472D030694D0D00311DDE /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5F2472D130694D0D00311DDE /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5F2472D030694D0D00311DDE /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5F35BCEE305461EE00663A7A /* Project object */;
 }

@@ -15,6 +15,7 @@ final class ActiveMomentViewModel {
     var selectedFragment: Fragment? = nil
     var showCaptureSheet: Bool = false
     var showEndMomentSheet: Bool = false
+    var showAddPeopleSheet: Bool = false
     var showLimitAlert: Bool = false
     var captureInitialType: FragmentType = .photo
     var orbPulse: Bool = false
@@ -32,7 +33,7 @@ final class ActiveMomentViewModel {
         self.autoOpenEnd = autoOpenEnd
         
         if let initType = initialCaptureType {
-            if (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
+            if !(momentManager.activeSession?.isShared ?? false) && (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
                 self.showLimitAlert = true
             } else {
                 self.showCaptureSheet = true
@@ -51,6 +52,11 @@ final class ActiveMomentViewModel {
         if let idx = momentManager.activeSession?.fragments.firstIndex(where: { $0.id == fragment.id }) {
             momentManager.activeSession?.fragments.remove(at: idx)
         }
+        if let session = momentManager.activeSession, session.isShared, let room = session.room {
+            Task {
+                try? await RoomManager.shared.deleteSharedFragment(id: fragment.id.uuidString, roomID: room.id)
+            }
+        }
         selectedFragment = nil
     }
     
@@ -59,7 +65,7 @@ final class ActiveMomentViewModel {
     }
     
     func openCaptureSheet(type: FragmentType) {
-        if (session?.fragments.count ?? 0) >= MomentSession.maxFragments {
+        if !(session?.isShared ?? false) && (session?.fragments.count ?? 0) >= MomentSession.maxFragments {
             showLimitAlert = true
             return
         }
@@ -68,11 +74,44 @@ final class ActiveMomentViewModel {
     }
     
     func handleCapturedFragment(_ newFragment: Fragment) {
-        if (session?.fragments.count ?? 0) < MomentSession.maxFragments {
+        guard !(session?.fragments.contains(where: { $0.id == newFragment.id }) ?? false) else {
+            showCaptureSheet = false
+            return
+        }
+        if (session?.isShared ?? false) || (session?.fragments.count ?? 0) < MomentSession.maxFragments {
             momentManager.addFragment(newFragment)
         } else {
             showLimitAlert = true
         }
         showCaptureSheet = false
+    }
+
+    func handleCapturedSharedFragment(_ sharedFragment: SharedFragment) {
+        let frag = sharedFragment.toFragment()
+        handleCapturedFragment(frag)
+    }
+
+    var isHost: Bool {
+        session?.isHost ?? true
+    }
+
+    func leaveSession() {
+        momentManager.leaveSession()
+    }
+
+    // MARK: - Collaborative Live Sync
+
+    func startSyncObserver() {
+        guard let session = session, session.isShared, let room = session.room else { return }
+        // Ensure central background synchronization engine in MomentManager is active for appropriate backend
+        if room.backend == .supabase {
+            momentManager.startSupabaseRealtimeObserver(roomID: room.id)
+        } else {
+            momentManager.startRemoteSyncObserver(roomID: room.id)
+        }
+    }
+
+    func stopSyncObserver() {
+        // Continuous remote sync is maintained by MomentManager across all views
     }
 }

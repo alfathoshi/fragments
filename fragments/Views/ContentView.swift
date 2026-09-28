@@ -16,6 +16,7 @@ enum AppTab: Hashable {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var viewModel = ContentViewModel()
 
     var body: some View {
@@ -71,7 +72,7 @@ struct ContentView: View {
             if viewModel.momentManager.isSessionActive && !viewModel.showActiveMomentView && viewModel.selectedTab != .capture && viewModel.selectedFragment == nil {
                 activeSessionFloatingIsland
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 64)
+                    .padding(.bottom, DeviceLayout.hasTrailingTabBar(horizontalSizeClass: horizontalSizeClass) ? 8 : 64)
                     .zIndex(40)
             }
 
@@ -79,13 +80,14 @@ struct ContentView: View {
             if viewModel.isCaptureMenuOpen {
                 FloatingCaptureOverlay(
                     isOpen: $viewModel.isCaptureMenuOpen,
-                    onSelectStartMoment: {
-                        if viewModel.momentManager.isSessionActive {
-                            viewModel.showResumeOrNewMomentAlert = true
-                        } else {
-                            viewModel.momentManager.startSession()
-                            viewModel.showActiveMomentView = true
-                        }
+                    onSelectStartPersonalMoment: {
+                        viewModel.handleStartPersonalMoment()
+                    },
+                    onSelectStartSharedMoment: {
+                        viewModel.handleStartSharedMoment()
+                    },
+                    onSelectJoinMoment: {
+                        viewModel.showJoinSheet = true
                     },
                     onSelectQuickCaptureType: { type in
                         if viewModel.momentManager.isSessionActive {
@@ -127,6 +129,15 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: viewModel.momentManager.activeSession != nil)
+        .onChange(of: viewModel.momentManager.activeSession == nil) { _, isNil in
+            if isNil && viewModel.showActiveMomentView {
+                viewModel.showActiveMomentView = false
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                    viewModel.selectedTab = .logs
+                    viewModel.activeTab = .logs
+                }
+            }
+        }
         .onChange(of: viewModel.selectedTab) { oldTab, newTab in
             if newTab == .capture {
                 viewModel.handleCaptureTabTap(oldTab: oldTab)
@@ -214,6 +225,17 @@ struct ContentView: View {
         } message: {
             Text("Are you sure you want to discard this moment? Any captured fragments will not be saved.")
         }
+        .alert(
+            "Leave Moment?",
+            isPresented: $viewModel.showLeaveConfirmation
+        ) {
+            Button("Cancel", role: .cancel) { }
+            Button("Leave", role: .destructive) {
+                viewModel.leaveMoment()
+            }
+        } message: {
+            Text("Are you sure you want to leave this shared moment? The host can continue and save the moment.")
+        }
         // Confirmation when starting a moment while one is already active
         .alert(
             "Moment in Progress",
@@ -257,6 +279,13 @@ struct ContentView: View {
         } message: {
             Text("A moment can contain a maximum of 15 fragments. You have reached the limit for this moment.")
         }
+        .sheet(isPresented: $viewModel.showJoinSheet, ) {
+            JoinRoomSheet { joinedRoom in
+                viewModel.handleJoinSharedMoment(room: joinedRoom)
+            }
+            .presentationDetents([.height(300), .large])
+            .presentationDragIndicator(.visible)
+        }
         .onAppear {
             viewModel.setModelContext(modelContext)
         }
@@ -297,22 +326,36 @@ struct ContentView: View {
 
                         Spacer()
 
-                        // Discard active moment button
-                        Button(role: .destructive) {
-                            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                            viewModel.showDiscardConfirmation = true
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.red)
-                                .frame(width: 38, height: 38)
+                        // Discard active moment (Host) or Leave shared moment (Member)
+                        if session.isHost {
+                            Button(role: .destructive) {
+                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                                viewModel.showDiscardConfirmation = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.red)
+                                    .frame(width: 38, height: 38)
+                            }
+                            .glassCircleButtonStyle()
+                        } else {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                viewModel.showLeaveConfirmation = true
+                            } label: {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.red)
+                                    .frame(width: 38, height: 38)
+                            }
+                            .glassCircleButtonStyle()
                         }
-                        .glassCircleButtonStyle()
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                 }
                 .floatingDockButtonStyle()
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 20)
             }
         }

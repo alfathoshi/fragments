@@ -17,11 +17,46 @@ final class ContentViewModel {
     var activeTab: AppTab = .fragments
     var incomingNewFragment: Fragment? = nil
 
+    init() {
+        if CommandLine.arguments.contains("-momentsTab") {
+            selectedTab = .logs
+            activeTab = .logs
+        }
+        if CommandLine.arguments.contains("-openCaptureMenu") {
+            isCaptureMenuOpen = true
+        }
+        if CommandLine.arguments.contains("-activeSharedMoment") {
+            let sampleRoom = Room(
+                id: "sample_shared_room",
+                name: "Bali Trip 2026",
+                emoji: "✨",
+                createdAt: Date(),
+                createdBy: "local_user",
+                memberCount: 3,
+                fragmentCount: 2
+            )
+            let sampleSession = MomentSession(
+                startDate: Date().addingTimeInterval(-320),
+                fragments: [
+                    Fragment(type: .photo, title: "Bali Sunset", subtitle: "06:15 PM"),
+                    Fragment(type: .note, title: "Dinner plan", subtitle: "06:20 PM")
+                ],
+                location: "Canggu, Bali",
+                isShared: true,
+                room: sampleRoom
+            )
+            momentManager.activeSession = sampleSession
+            showActiveMomentView = true
+        }
+    }
+
     // Floating Capture Menu & Modals
     var isCaptureMenuOpen: Bool = false
     var showActiveMomentView: Bool = false
+    var showJoinSheet: Bool = false
     var showQuickCaptureSheet: Bool = false
     var showDiscardConfirmation: Bool = false
+    var showLeaveConfirmation: Bool = false
     var showResumeOrNewMomentAlert: Bool = false
     var showDiscardForQuickCaptureAlert: Bool = false
     var showStandaloneLimitAlert: Bool = false
@@ -31,6 +66,7 @@ final class ContentViewModel {
     var pendingQuickCaptureType: FragmentType = .photo
     var activeMomentInitialCaptureType: FragmentType? = nil
     var activeMomentAutoOpenEnd: Bool = false
+    var pendingStartMomentIsShared: Bool = false
 
     var currentTab: AppTab {
         selectedTab == .capture ? activeTab : selectedTab
@@ -41,6 +77,17 @@ final class ContentViewModel {
     }
 
     func handleDeepLink(_ url: URL) {
+        if url.scheme == "https" && url.host?.contains("icloud.com") == true {
+            Task {
+                if let room = try? await RoomManager.shared.acceptShare(with: url) {
+                    await MainActor.run {
+                        handleJoinSharedMoment(room: room)
+                    }
+                }
+            }
+            return
+        }
+
         guard url.scheme == "fragments" else { return }
 
         // Close any standalone detail views or menus that might block presentation
@@ -48,36 +95,53 @@ final class ContentViewModel {
         isCaptureMenuOpen = false
 
         if url.host == "end" {
-            // Dismiss any existing active moment cover first so we can cleanly open end sheet
-            showActiveMomentView = false
-            activeMomentInitialCaptureType = nil
-            activeMomentAutoOpenEnd = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.showActiveMomentView = true
+            if showActiveMomentView {
+                NotificationCenter.default.post(name: NSNotification.Name("RequestEndMoment"), object: nil)
+            } else {
+                activeMomentInitialCaptureType = nil
+                activeMomentAutoOpenEnd = true
+                showActiveMomentView = true
+            }
+        } else if url.host == "leave" {
+            if showActiveMomentView {
+                NotificationCenter.default.post(name: NSNotification.Name("RequestLeaveMoment"), object: nil)
+            } else {
+                showLeaveConfirmation = true
             }
         } else if url.host == "capture" {
             let modeParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?
                 .first(where: { $0.name == "mode" })?
-                .value ?? "photo"
+                .value?.lowercased() ?? "photo"
 
             let targetType: FragmentType
+            let targetMode: CaptureMode
             switch modeParam {
-            case "video": targetType = .video
-            case "note":  targetType = .note
-            case "audio", "memo": targetType = .audio
-            default:      targetType = .photo
+            case "video":
+                targetType = .video
+                targetMode = .video
+            case "note":
+                targetType = .note
+                targetMode = .note
+            case "audio", "memo":
+                targetType = .audio
+                targetMode = .memo
+            default:
+                targetType = .photo
+                targetMode = .photo
             }
 
             if momentManager.isSessionActive {
                 if (momentManager.activeSession?.fragments.count ?? 0) >= MomentSession.maxFragments {
                     showMomentLimitAlert = true
                 } else {
-                    showActiveMomentView = false
-                    activeMomentAutoOpenEnd = false
-                    activeMomentInitialCaptureType = targetType
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        self.showActiveMomentView = true
+                    if showActiveMomentView {
+                        NotificationCenter.default.post(name: NSNotification.Name("OpenActiveMomentCapture"), object: targetType)
+                        NotificationCenter.default.post(name: NSNotification.Name("SelectCaptureMode"), object: targetMode)
+                    } else {
+                        activeMomentAutoOpenEnd = false
+                        activeMomentInitialCaptureType = targetType
+                        showActiveMomentView = true
                     }
                 }
             } else {
@@ -87,6 +151,7 @@ final class ContentViewModel {
                 } else {
                     quickCaptureInitialType = targetType
                     showQuickCaptureSheet = true
+                    NotificationCenter.default.post(name: NSNotification.Name("SelectCaptureMode"), object: targetMode)
                 }
             }
         } else if url.host == "moment" {
@@ -109,7 +174,59 @@ final class ContentViewModel {
                     activeTab = .fragments
                 }
             }
+        } else if url.host == "room" || url.host == "join" {
+            let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+            if let code = queryItems?.first(where: { $0.name == "code" })?.value,
+               code.trimmingCharacters(in: .whitespacesAndNewlines).count == 6 {
+                Task {
+                    if let room = try? await RoomManager.shared.joinRoom(code: code) {
+                        await MainActor.run {
+                            handleJoinSharedMoment(room: room)
+                        }
+                        return
+                    }
+                }
+            }
+            let roomId = queryItems?.first(where: { $0.name == "id" })?.value ?? UUID().uuidString
+            let roomName = queryItems?.first(where: { $0.name == "name" })?.value ?? "Shared Moment"
+            let createdAtDouble = queryItems?.first(where: { $0.name == "createdAt" })?.value.flatMap(Double.init)
+            let deepLinkCreatedAt = createdAtDouble != nil ? Date(timeIntervalSince1970: createdAtDouble!) : nil
+            Task {
+                if let shareURL = await CloudKitRoomRepository.shared.lookupShareURL(for: roomId) {
+                    if let room = try? await RoomManager.shared.acceptShare(with: shareURL) {
+                        await MainActor.run {
+                            handleJoinSharedMoment(room: room)
+                        }
+                        return
+                    }
+                }
+                if let room = try? await CloudKitRoomRepository.shared.fetchRoom(id: roomId) {
+                    _ = await RoomManager.shared.joinRoomDirect(id: room.id, name: room.name, createdAt: room.createdAt)
+                    await MainActor.run {
+                        handleJoinSharedMoment(room: room)
+                    }
+                    return
+                }
+                let resolvedInfo = await CloudKitRoomRepository.shared.lookupRoomInfo(for: roomId)
+                let resolvedCreatedAt = resolvedInfo?.createdAt ?? deepLinkCreatedAt
+                let room = await RoomManager.shared.joinRoomDirect(
+                    id: resolvedInfo?.id ?? roomId,
+                    name: resolvedInfo?.name ?? roomName,
+                    createdAt: resolvedCreatedAt
+                )
+                await MainActor.run {
+                    handleJoinSharedMoment(room: room)
+                }
+            }
         }
+    }
+
+    func handleJoinSharedMoment(room: Room) {
+        if momentManager.isSessionActive {
+            momentManager.cancelSession()
+        }
+        momentManager.joinSharedSession(room: room)
+        showActiveMomentView = true
     }
 
     func handleFragmentCaptured(_ newFragment: Fragment) {
@@ -149,14 +266,43 @@ final class ContentViewModel {
         momentManager.cancelSession()
     }
 
+    func leaveMoment() {
+        momentManager.leaveSession()
+    }
+
     func resumeMoment() {
         showActiveMomentView = true
     }
 
+    func handleStartPersonalMoment() {
+        if momentManager.isSessionActive {
+            pendingStartMomentIsShared = false
+            showResumeOrNewMomentAlert = true
+        } else {
+            momentManager.startSession(isShared: false)
+            showActiveMomentView = true
+        }
+    }
+
+    func handleStartSharedMoment() {
+        if momentManager.isSessionActive {
+            pendingStartMomentIsShared = true
+            showResumeOrNewMomentAlert = true
+        } else {
+            momentManager.startSharedSession()
+            showActiveMomentView = true
+        }
+    }
+
     func startNewMoment() {
         momentManager.cancelSession()
-        momentManager.startSession()
-        showActiveMomentView = true
+        if pendingStartMomentIsShared {
+            momentManager.startSharedSession()
+            showActiveMomentView = true
+        } else {
+            momentManager.startSession(isShared: false)
+            showActiveMomentView = true
+        }
     }
 
     func discardForQuickCapture() {

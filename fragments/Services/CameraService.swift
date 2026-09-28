@@ -267,6 +267,56 @@ public final class CameraService: NSObject, @unchecked Sendable {
             guard let self = self else { return }
             self.photoCaptureCompletion = completion
 
+            #if targetEnvironment(simulator)
+            let isSim = true
+            #else
+            let isSim = self.isUnavailable || self.videoDeviceInput == nil
+            #endif
+
+            if isSim {
+                let size = CGSize(width: 1080, height: 1440)
+                let renderer = UIGraphicsImageRenderer(size: size)
+                let image = renderer.image { ctx in
+                    let colors = [
+                        UIColor(red: 0.95, green: 0.55, blue: 0.35, alpha: 1.0).cgColor,
+                        UIColor(red: 0.85, green: 0.25, blue: 0.65, alpha: 1.0).cgColor,
+                        UIColor(red: 0.35, green: 0.45, blue: 0.95, alpha: 1.0).cgColor
+                    ]
+                    let colorSpace = CGColorSpaceCreateDeviceRGB()
+                    let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0.0, 0.5, 1.0])!
+                    ctx.cgContext.drawLinearGradient(gradient, start: CGPoint.zero, end: CGPoint(x: size.width, y: size.height), options: [])
+
+                    let titleAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 52, weight: .bold),
+                        .foregroundColor: UIColor.white
+                    ]
+                    let text = "✨ Captured Fragment"
+                    let textSize = text.size(withAttributes: titleAttrs)
+                    let textRect = CGRect(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2 - 40, width: textSize.width, height: textSize.height)
+                    text.draw(in: textRect, withAttributes: titleAttrs)
+
+                    let subAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 28, weight: .medium),
+                        .foregroundColor: UIColor.white.withAlphaComponent(0.8)
+                    ]
+                    let subText = Date().formatted(date: .abbreviated, time: .standard)
+                    let subSize = subText.size(withAttributes: subAttrs)
+                    let subRect = CGRect(x: (size.width - subSize.width) / 2, y: textRect.maxY + 16, width: subSize.width, height: subSize.height)
+                    subText.draw(in: subRect, withAttributes: subAttrs)
+                }
+
+                let filename = "IMG_\(UUID().uuidString).jpg"
+                let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
+                if let data = image.jpegData(compressionQuality: 0.85) {
+                    try? data.write(to: fileURL)
+                }
+
+                DispatchQueue.main.async {
+                    completion(image, fileURL)
+                }
+                return
+            }
+
             let settings = AVCapturePhotoSettings()
             if self.videoDeviceInput?.device.hasFlash == true {
                 settings.flashMode = isFlashOn ? .on : .off
@@ -312,6 +362,22 @@ public final class CameraService: NSObject, @unchecked Sendable {
         sessionQueue.async { [weak self] in
             guard let self = self, !self.movieOutput.isRecording else { return }
 
+            #if targetEnvironment(simulator)
+            self.recordingStartTime = Date()
+            DispatchQueue.main.async {
+                self.isRecordingVideo = true
+            }
+            return
+            #else
+            if self.isUnavailable || self.videoDeviceInput == nil {
+                self.recordingStartTime = Date()
+                DispatchQueue.main.async {
+                    self.isRecordingVideo = true
+                }
+                return
+            }
+            #endif
+
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension("mov")
@@ -338,7 +404,37 @@ public final class CameraService: NSObject, @unchecked Sendable {
 
     public func stopVideoRecording(completion: @escaping (URL?, TimeInterval) -> Void) {
         sessionQueue.async { [weak self] in
-            guard let self = self, self.movieOutput.isRecording else { return }
+            guard let self = self else { return }
+
+            #if targetEnvironment(simulator)
+            let duration = self.recordingStartTime != nil ? Date().timeIntervalSince(self.recordingStartTime!) : 2.5
+            self.recordingStartTime = nil
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mov")
+            try? Data().write(to: tempURL)
+            DispatchQueue.main.async {
+                self.isRecordingVideo = false
+                completion(tempURL, duration)
+            }
+            return
+            #else
+            if self.isUnavailable || self.videoDeviceInput == nil {
+                let duration = self.recordingStartTime != nil ? Date().timeIntervalSince(self.recordingStartTime!) : 2.5
+                self.recordingStartTime = nil
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("mov")
+                try? Data().write(to: tempURL)
+                DispatchQueue.main.async {
+                    self.isRecordingVideo = false
+                    completion(tempURL, duration)
+                }
+                return
+            }
+            #endif
+
+            guard self.movieOutput.isRecording else { return }
             self.videoRecordingCompletion = completion
             self.movieOutput.stopRecording()
 

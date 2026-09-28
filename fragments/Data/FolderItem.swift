@@ -155,3 +155,69 @@ public struct FolderItem: Identifiable, Hashable {
     }
 }
 
+// MARK: - Moment Category
+
+public enum MomentCategory: String, CaseIterable, Identifiable, Codable, Sendable {
+    case life = "Life"
+    case travel = "Travel"
+    case friends = "Friends"
+    case nature = "Nature"
+    case creative = "Creative"
+    case work = "Work"
+
+    public var id: String { rawValue }
+
+    public var displayName: String { rawValue }
+
+    /// SF Symbol corresponding to each category
+    public var sfSymbol: String {
+        switch self {
+        case .life:
+            return "leaf.fill"
+        case .travel:
+            return "airplane.up.right"
+        case .friends:
+            return "figure.2.left.holdinghands"
+        case .nature:
+            return "sun.max.fill"
+        case .creative:
+            return "paintbrush.pointed.fill"
+        case .work:
+            return "case.fill"
+        }
+    }
+
+    /// Resolves the SF Symbol name from an optional category string case-insensitively
+    public static func symbol(for rawCategory: String?) -> String? {
+        guard let raw = rawCategory?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let lower = raw.lowercased()
+        switch lower {
+        case "life": return MomentCategory.life.sfSymbol
+        case "travel": return MomentCategory.travel.sfSymbol
+        case "friends": return MomentCategory.friends.sfSymbol
+        case "nature": return MomentCategory.nature.sfSymbol
+        case "creative": return MomentCategory.creative.sfSymbol
+        case "work": return MomentCategory.work.sfSymbol
+        default: return nil
+        }
+    }
+
+    /// Parses string into strongly-typed MomentCategory
+    public static func from(string: String?) -> MomentCategory? {
+        guard let raw = string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return nil }
+        switch raw {
+        case "life": return .life
+        case "travel": return .travel
+        case "friends": return .friends
+        case "nature": return .nature
+        case "creative": return .creative
+        case "work": return .work
+        default: return nil
+        }
+    }
+
+    public static let allCategoryNames: [String] = MomentCategory.allCases.map { $0.rawValue }
+}
+

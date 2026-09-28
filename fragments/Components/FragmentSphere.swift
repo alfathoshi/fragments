@@ -50,17 +50,22 @@ public struct FragmentSphere: View {
         self.onSelectFragment = onSelectFragment
     }
 
+    private var deduplicatedFragments: [Fragment] {
+        var seen = Set<UUID>()
+        return fragments.filter { seen.insert($0.id).inserted }
+    }
+
     public var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
             let radius = min(size.width * 0.42, 170.0)
             let projected = SpherePositionEngine.project(
-                fragments: fragments,
+                fragments: deduplicatedFragments,
                 radius: radius,
                 rotationAngle: rotationAngle,
                 tiltAngle: tiltAngle,
                 time: time
-            ).sorted(by: { $0.zIndex < $1.zIndex })
+            )
 
             ZStack {
                 // Ethereal ambient center aura
@@ -202,8 +207,11 @@ public struct FragmentSphere: View {
 
     private func handleDragEnded(value: DragGesture.Value, radius: CGFloat) {
         isDragging = false
-        // Cap max velocity for organic, pleasant feel
-        dragVelocity = max(-12.0, min(12.0, dragVelocity))
+        if Date().timeIntervalSince(lastDragTime) > 0.08 {
+            dragVelocity = 0.0
+        } else {
+            dragVelocity = max(-8.0, min(8.0, dragVelocity))
+        }
     }
 
     // MARK: - Physics & Inertia Deceleration Loop

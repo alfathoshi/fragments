@@ -16,6 +16,9 @@ public struct FolderCollection: Identifiable, Hashable {
     public var date: Date
     public var items: [FolderItem]
     public var color: Color?
+    public var isShared: Bool
+    public var roomID: String?
+    public var category: String
 
     public init(
         id: UUID = UUID(),
@@ -23,7 +26,10 @@ public struct FolderCollection: Identifiable, Hashable {
         location: String,
         date: Date,
         items: [FolderItem],
-        color: Color? = nil
+        color: Color? = nil,
+        isShared: Bool = false,
+        roomID: String? = nil,
+        category: String = "Life"
     ) {
         self.id = id
         self.name = name
@@ -31,6 +37,9 @@ public struct FolderCollection: Identifiable, Hashable {
         self.date = date
         self.items = items
         self.color = color
+        self.isShared = isShared
+        self.roomID = roomID
+        self.category = category
     }
 
     public var fragmentCountText: String {
@@ -45,13 +54,14 @@ public struct FolderCollection: Identifiable, Hashable {
     }
 }
 
-// MARK: - Logs View
+// MARK: - Moments View (Unified Personal & Shared Moments)
 
 struct MomentsView: View {
     // MARK: - State
 
     @State private var viewModel: MomentsViewModel
     @State private var showProfileSheet = false
+    @State private var revealedFolderID: UUID? = nil
 
     init(momentManager: MomentManager = MomentManager.shared) {
         _viewModel = State(wrappedValue: MomentsViewModel(momentManager: momentManager))
@@ -62,134 +72,199 @@ struct MomentsView: View {
         GridItem(.flexible(), spacing: 18)
     ]
 
+    /// Unified list of all moments (both personal and collaborative rooms)
+    private var allMoments: [FolderCollection] {
+        var result = viewModel.momentManager.collections
+        let existingRoomIDs = Set(result.compactMap(\.roomID))
+        let activeRoomID = viewModel.momentManager.activeSession?.room?.id
+
+        for room in RoomManager.shared.rooms {
+            // Exclude rooms already saved in collections and exclude the currently active session room
+            if !existingRoomIDs.contains(room.id) && room.id != activeRoomID {
+                let cachedFragments = (try? LocalRoomCache.shared.loadFragments(roomID: room.id)) ?? []
+                let items = cachedFragments.map { FolderItem(from: $0.toFragment()) }
+                let color = room.accentColorHex.map { Color.fromRGBAString($0) }
+                let stableUUID = UUID(uuidString: room.id) ?? UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012x", abs(room.id.hashValue)))") ?? UUID()
+                let collection = FolderCollection(
+                    id: stableUUID,
+                    name: room.name,
+                    location: "Shared",
+                    date: room.createdAt,
+                    items: items,
+                    color: color,
+                    isShared: true,
+                    roomID: room.id,
+                    category: "Friends"
+                )
+                result.append(collection)
+            }
+        }
+
+        return result.sorted { $0.date > $1.date }
+    }
+
     var body: some View {
         NavigationStack {
-            Group {
-                if viewModel.momentManager.collections.isEmpty {
-                    emptyStateView
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            // 2-Column Grid
-                            LazyVGrid(columns: columns, spacing: 24) {
-                                ForEach(viewModel.momentManager.collections) { collection in
-                                    VStack(alignment: .center, spacing: 12) {
-                                        // Folder in closed resting preview state
-                                        MomentFolder(
-                                            items: collection.items,
-                                            isOpen: .constant(false),
-                                            size: CGSize(width: 168, height: 166),
-                                            folderColor: collection.color,
-                                            onTapFolder: {
-                                                viewModel.handleMomentSelection(collection)
-                                            }
-                                        )
-                                        .overlay(alignment: .topTrailing) {
-                                            if viewModel.isEditing {
-                                                Circle()
-                                                    .fill(.ultraThinMaterial)
-                                                    .frame(width: 30, height: 30)
-                                                    .overlay(
-                                                        Circle()
-                                                            .stroke(Color.white.opacity(0.35), lineWidth: 1)
-                                                    )
-                                                    .overlay(
-                                                        Image(systemName: "pencil")
-                                                            .font(.system(size: 13, weight: .bold))
-                                                            .foregroundStyle(Color.primary)
-                                                    )
-                                                    .shadow(color: Color.black.opacity(0.15), radius: 6, y: 2)
-                                                    .offset(x: 6, y: -6)
-                                                    .transition(.scale.combined(with: .opacity))
-                                            }
-                                        }
+            momentsContent
+                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+                .navigationTitle("Moments")
+                .toolbarTitleDisplayMode(.inlineLarge)
+                .toolbar {
 
-                                        // Folder metadata text under card
-                                        VStack(spacing: 3) {
-                                            Text(collection.name)
-                                                .font(.system(size: 14, weight: .semibold))
-                                                .foregroundStyle(.primary)
-                                                .lineLimit(1)
+                    if !allMoments.isEmpty {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                viewModel.toggleEditing()
+                            } label: {
+                                Text(viewModel.isEditing ? "Done" : "Edit")
+                                    .font(.system(size: 16, weight: .medium))
+                            }
+                        }
+                    }
 
-                                            HStack(spacing: 4) {
-                                                Image(systemName: "square.stack.3d.up.fill")
-                                                    .font(.system(size: 10))
-                                                Text(collection.fragmentCountText)
-                                                    .font(.system(size: 12, weight: .regular))
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ProfileToolbarButton {
+                            showProfileSheet = true
+                        }
+                    }
+                }
+                .sheet(isPresented: $showProfileSheet) {
+                    ProfileView()
+                }
+                .blur(radius: viewModel.editingCollection != nil ? 16 : 0)
+                .animation(.easeInOut(duration: 0.28), value: viewModel.editingCollection != nil)
+                .animation(.spring(response: 0.4, dampingFraction: 0.78), value: allMoments.count)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: viewModel.isEditing)
+                // Bottom Sheet opened when Edit mode is active and moment is picked
+                .sheet(item: $viewModel.editingCollection) { collection in
+                    FolderDetailBottomSheet(
+                        collection: collection,
+                        onUpdateColor: { newColor in
+                            viewModel.momentManager.updateMomentColor(id: collection.id, roomID: collection.roomID, color: newColor)
+                        },
+                        onDelete: {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                                viewModel.momentManager.deleteMoment(id: collection.id, roomID: collection.roomID)
+                            }
+                        },
+                        onLeave: {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                                viewModel.momentManager.leaveMoment(id: collection.id, roomID: collection.roomID)
+                            }
+                        }
+                    )
+                }
+                // Navigation destination pushed on moment tap (Normal mode)
+                .navigationDestination(item: $viewModel.selectedDetailCollection) { collection in
+                    let currentCollection = allMoments.first(where: { $0.id == collection.id }) ?? collection
+                    MomentDetailView(
+                        collection: currentCollection,
+                        onUpdateCollection: { updated in
+                            viewModel.momentManager.updateMomentItems(id: updated.id, items: updated.items)
+                            if let idx = viewModel.momentManager.collections.firstIndex(where: { $0.id == updated.id }) {
+                                viewModel.momentManager.collections[idx] = updated
+                            }
+                        }
+                    )
+                }
+        }
+    }
+
+    // MARK: - Moments Grid Content
+
+    @ViewBuilder
+    private var momentsContent: some View {
+        if allMoments.isEmpty {
+            emptyStateView
+                .transition(.opacity)
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 24) {
+                    ForEach(allMoments) { collection in
+                        VStack(alignment: .center, spacing: 12) {
+                            MomentFolder(
+                                items: collection.items,
+                                isOpen: Binding(
+                                    get: { revealedFolderID == collection.id },
+                                    set: { isRevealed in
+                                        withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                                            if isRevealed {
+                                                revealedFolderID = collection.id
+                                            } else if revealedFolderID == collection.id {
+                                                revealedFolderID = nil
                                             }
-                                            .foregroundStyle(.secondary)
-                                        }
-                                        .contentShape(Rectangle())
-                                        .onTapGesture {
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                            viewModel.handleMomentSelection(collection)
                                         }
                                     }
-                                    .pressableFeedback()
+                                ),
+                                size: CGSize(width: 168, height: 166),
+                                isShared: collection.isShared,
+                                folderColor: collection.color,
+                                category: collection.category,
+                                onTapFolder: {
+                                    viewModel.handleMomentSelection(collection)
+                                },
+                                onTapItem: { _ in
+                                    viewModel.handleMomentSelection(collection)
+                                }
+                            )
+                            .overlay(alignment: .topTrailing) {
+                                if viewModel.isEditing {
+                                    Circle()
+                                        .fill(.ultraThinMaterial)
+                                        .frame(width: 30, height: 30)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                                        )
+                                        .overlay(
+                                            Image(systemName: "pencil")
+                                                .font(.system(size: 13, weight: .bold))
+                                                .foregroundStyle(Color.primary)
+                                        )
+                                        .shadow(color: Color.black.opacity(0.15), radius: 6, y: 2)
+                                        .offset(x: 6, y: -6)
+                                        .transition(.scale.combined(with: .opacity))
                                 }
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 40)
-                        }
-                    }
-                    .transition(.opacity)
-                }
-            }
-            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
-            .navigationTitle("Moments")
-            .toolbarTitleDisplayMode(.inlineLarge)
-            .toolbar {
-                if !viewModel.momentManager.collections.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            viewModel.toggleEditing()
-                        } label: {
-                            Text(viewModel.isEditing ? "Done" : "Edit")
-                                .font(.system(size: 16, weight: .medium))
-                        }
-                    }
-                }
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    ProfileToolbarButton {
-                        showProfileSheet = true
+                            // Folder metadata text under card
+                            VStack(spacing: 3) {
+                                Text(collection.name)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+
+                                HStack(spacing: 4) {
+                                    Image(systemName: "square.stack.3d.up.fill")
+                                        .font(.system(size: 10))
+                                    Text(collection.fragmentCountText)
+                                        .font(.system(size: 12, weight: .regular))
+                                }
+                                .foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                viewModel.handleMomentSelection(collection)
+                            }
+                        }
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 40)
             }
-            .sheet(isPresented: $showProfileSheet) {
-                ProfileView()
-            }
-            .blur(radius: viewModel.editingCollection != nil ? 16 : 0)
-            .animation(.easeInOut(duration: 0.28), value: viewModel.editingCollection != nil)
-            .animation(.spring(response: 0.4, dampingFraction: 0.78), value: viewModel.momentManager.collections.count)
-            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: viewModel.isEditing)
-            // Bottom Sheet opened when Edit mode is active and moment is picked
-            .sheet(item: $viewModel.editingCollection) { collection in
-                FolderDetailBottomSheet(
-                    collection: collection,
-                    onUpdateColor: { newColor in
-                        viewModel.momentManager.updateMomentColor(id: collection.id, color: newColor)
-                    },
-                    onDelete: {
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
-                            viewModel.momentManager.deleteMoment(id: collection.id)
+            .transition(.opacity)
+            .onAppear {
+                #if DEBUG
+                if CommandLine.arguments.contains("-revealFirstFolder") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                            revealedFolderID = allMoments.first?.id
                         }
                     }
-                )
-            }
-            // Navigation destination pushed on moment tap (Normal mode)
-            .navigationDestination(item: $viewModel.selectedDetailCollection) { collection in
-                let currentCollection = viewModel.momentManager.collections.first(where: { $0.id == collection.id }) ?? collection
-                MomentDetailView(
-                    collection: currentCollection,
-                    onUpdateCollection: { updated in
-                        viewModel.momentManager.updateMomentItems(id: updated.id, items: updated.items)
-                        if let idx = viewModel.momentManager.collections.firstIndex(where: { $0.id == updated.id }) {
-                            viewModel.momentManager.collections[idx] = updated
-                        }
-                    }
-                )
+                }
+                #endif
             }
         }
     }
@@ -220,7 +295,7 @@ struct MomentsView: View {
 
             // Copy
             VStack(spacing: 8) {
-                Text("No Moments Yet")
+                Text("No moments yet")
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
 
@@ -245,6 +320,7 @@ public struct FolderDetailBottomSheet: View {
     public let collection: FolderCollection
     public var onUpdateColor: ((Color?) -> Void)? = nil
     public var onDelete: (() -> Void)? = nil
+    public var onLeave: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var folderColor: Color?
     @State private var showColorPicker = false
@@ -252,15 +328,34 @@ public struct FolderDetailBottomSheet: View {
     @State private var isFolderOpen = false
     @State private var sheetDetent: PresentationDetent = .fraction(0.38)
     @State private var showDeleteConfirmation = false
+    @State private var showLeaveConfirmation = false
+
+    /// Whether this shared moment is owned by someone else (user should "Leave" instead of "Delete")
+    private var isSharedByOthers: Bool {
+        guard collection.isShared, let roomID = collection.roomID else { return false }
+        if let room = RoomManager.shared.rooms.first(where: { $0.id == roomID })
+            ?? RoomManager.shared.currentRoom
+            ?? (MomentManager.shared.activeSession?.room?.id == roomID ? MomentManager.shared.activeSession?.room : nil) {
+            if room.id == roomID {
+                return !room.isCurrentUserOwner
+            }
+        }
+        if let cachedRoom = try? LocalRoomCache.shared.loadRoom(id: roomID) {
+            return !cachedRoom.isCurrentUserOwner
+        }
+        return false
+    }
 
     public init(
         collection: FolderCollection,
         onUpdateColor: ((Color?) -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() -> Void)? = nil,
+        onLeave: (() -> Void)? = nil
     ) {
         self.collection = collection
         self.onUpdateColor = onUpdateColor
         self.onDelete = onDelete
+        self.onLeave = onLeave
         self._folderColor = State(initialValue: collection.color)
     }
 
@@ -275,7 +370,9 @@ public struct FolderDetailBottomSheet: View {
                             isOpen: $isFolderOpen,
                             size: CGSize(width: 180, height: 178),
                             isLocked: true,
+                            isShared: collection.isShared,
                             folderColor: folderColor,
+                            category: collection.category,
                             onTapItem: { item in
                                 selectedFragment = item
                             }
@@ -289,25 +386,34 @@ public struct FolderDetailBottomSheet: View {
                     // METADATA & INFORMATION SECTION
                     VStack(alignment: .leading, spacing: 18) {
 
-                        // 2. Metadata Grid (Fragments, Location, Date & Time)
+                        // 2. Metadata Grid (Fragments, Location, Date & Time, Category)
                         VStack(spacing: 14) {
+                            if let symbol = MomentCategory.symbol(for: collection.category) {
+                                metadataRow(
+                                    icon: symbol,
+                                    iconColor: .primary,
+                                    title: "Category",
+                                    value: collection.category
+                                )
+                            }
+
                             metadataRow(
                                 icon: "square.stack.3d.up.fill",
-                                iconColor: .blue,
+                                iconColor: .primary,
                                 title: "Fragments Count",
                                 value: collection.fragmentCountText
                             )
 
                             metadataRow(
                                 icon: "mappin.and.ellipse",
-                                iconColor: .red,
+                                iconColor: .primary,
                                 title: "Location",
                                 value: collection.location
                             )
 
                             metadataRow(
                                 icon: "calendar.badge.clock",
-                                iconColor: .orange,
+                                iconColor: .primary,
                                 title: "Time & Date",
                                 value: collection.formattedDateTime
                             )
@@ -338,15 +444,27 @@ public struct FolderDetailBottomSheet: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(role: .destructive) {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        showDeleteConfirmation = true
-                    } label: {
-                        Image(systemName: "trash.fill")
-                            .font(.system(size: 20))
+                    if isSharedByOthers {
+                        Button(role: .destructive) {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            showLeaveConfirmation = true
+                        } label: {
+                            Image(systemName: "rectangle.portrait.and.arrow.right.fill")
+                                .font(.system(size: 20))
+                        }
+                        .tint(.red)
+                        .accessibilityLabel("Leave moment")
+                    } else {
+                        Button(role: .destructive) {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            showDeleteConfirmation = true
+                        } label: {
+                            Image(systemName: "trash.fill")
+                                .font(.system(size: 20))
+                        }
+                        .tint(.red)
+                        .accessibilityLabel("Delete moment")
                     }
-                    .tint(.red)
-                    .accessibilityLabel("Delete moment")
                 }
             }
             .alert("Delete Moment?", isPresented: $showDeleteConfirmation) {
@@ -356,12 +474,26 @@ public struct FolderDetailBottomSheet: View {
                     if let onDelete = onDelete {
                         onDelete()
                     } else {
-                        MomentManager.shared.deleteMoment(id: collection.id)
+                        MomentManager.shared.deleteMoment(id: collection.id, roomID: collection.roomID)
                     }
                     dismiss()
                 }
             } message: {
                 Text("Are you sure you want to delete \"\(collection.name)\"? This action cannot be undone.")
+            }
+            .alert("Leave Moment?", isPresented: $showLeaveConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Leave", role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    if let onLeave = onLeave {
+                        onLeave()
+                    } else {
+                        MomentManager.shared.leaveMoment(id: collection.id, roomID: collection.roomID)
+                    }
+                    dismiss()
+                }
+            } message: {
+                Text("Are you sure you want to leave \"\(collection.name)\"? The moment will be removed from your device but will remain for the owner.")
             }
             .blur(radius: showColorPicker ? 16 : 0)
             .animation(.easeInOut(duration: 0.28), value: showColorPicker)

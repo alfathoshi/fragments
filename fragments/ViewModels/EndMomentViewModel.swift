@@ -16,9 +16,7 @@ final class EndMomentViewModel {
     var location: String
     var showDiscardConfirmation: Bool = false
     
-    let categoryOptions = [
-        "Life", "Travel", "Friends", "Nature", "Creative", "Quiet", "Work"
-    ]
+    let categoryOptions = MomentCategory.allCategoryNames
     
     let session: MomentSession
     

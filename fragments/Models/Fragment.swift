@@ -235,7 +235,7 @@ public struct Fragment: Identifiable, Hashable {
         let hours = totalMinutes / 60
         let minutes = totalMinutes % 60
         if hours > 0 {
-            return "\(hours)h \(minutes)m left"
+            return "\(hours)h left"
         } else {
             return "\(max(1, minutes))m left"
         }

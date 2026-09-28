@@ -40,11 +40,11 @@ public struct SplashScreenView: View {
                         .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.12), radius: 16, y: 8)
 
                     VStack(spacing: 6) {
-                        Text("Fragments")
+                        Text("Fraqments")
                             .font(.system(size: 32, weight: .bold, design: .rounded))
                             .foregroundStyle(.primary)
 
-                        Text("Capture a moments")
+                        Text("Capture a Moment")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.secondary)
                     }

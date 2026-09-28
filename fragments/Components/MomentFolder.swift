@@ -14,7 +14,9 @@ public struct MomentFolder<CardContent: View>: View {
     @Binding public var isOpen: Bool
     public var size: CGSize
     public var isLocked: Bool
+    public var isShared: Bool
     public var folderColor: Color?
+    public var category: String?
     public var onTapFolder: (() -> Void)?
     public var onTapItem: ((FolderItem) -> Void)?
     public var cardBuilder: ((FolderItem, Int) -> CardContent)?
@@ -23,7 +25,8 @@ public struct MomentFolder<CardContent: View>: View {
 
     // MARK: - Internal Gesture & Interaction State
 
-    @GestureState private var dragOffset: CGFloat = 0
+    @State private var isHolding: Bool = false
+    @State private var didTriggerReveal: Bool = false
     @State private var hoveredIndex: Int? = nil
 
     // MARK: - Initializers
@@ -34,7 +37,9 @@ public struct MomentFolder<CardContent: View>: View {
         isOpen: Binding<Bool>,
         size: CGSize = CGSize(width: 172, height: 171),
         isLocked: Bool = false,
+        isShared: Bool = false,
         folderColor: Color? = nil,
+        category: String? = nil,
         onTapFolder: (() -> Void)? = nil,
         onTapItem: ((FolderItem) -> Void)? = nil,
         @ViewBuilder cardBuilder: @escaping (FolderItem, Int) -> CardContent
@@ -43,7 +48,9 @@ public struct MomentFolder<CardContent: View>: View {
         self._isOpen = isOpen
         self.size = size
         self.isLocked = isLocked
+        self.isShared = isShared
         self.folderColor = folderColor
+        self.category = category
         self.onTapFolder = onTapFolder
         self.onTapItem = onTapItem
         self.cardBuilder = cardBuilder
@@ -55,7 +62,9 @@ public struct MomentFolder<CardContent: View>: View {
         isOpen: Binding<Bool>,
         size: CGSize = CGSize(width: 172, height: 171),
         isLocked: Bool = false,
+        isShared: Bool = false,
         folderColor: Color? = nil,
+        category: String? = nil,
         onTapFolder: (() -> Void)? = nil,
         onTapItem: ((FolderItem) -> Void)? = nil
     ) where CardContent == DefaultFolderCardView {
@@ -63,7 +72,9 @@ public struct MomentFolder<CardContent: View>: View {
         self._isOpen = isOpen
         self.size = size
         self.isLocked = isLocked
+        self.isShared = isShared
         self.folderColor = folderColor
+        self.category = category
         self.onTapFolder = onTapFolder
         self.onTapItem = onTapItem
         self.cardBuilder = { item, index in
@@ -77,18 +88,13 @@ public struct MomentFolder<CardContent: View>: View {
     private var cardHeight: CGFloat { size.height * 0.74 }
     private var coverHeight: CGFloat { size.height * 0.575 }
 
-    /// Drag progress normalized between 0.0 (closed) and 1.0 (open)
+    /// Normalized progress between 0.0 (closed) and 1.0 (open)
     private var currentProgress: CGFloat {
-        if isLocked {
-            return isOpen ? 1.0 : 0.0
-        }
-        let base: CGFloat = isOpen ? 1.0 : 0.0
-        let dragFactor = -dragOffset / (size.height * 0.5)
-        return min(max(base + dragFactor, 0.0), 1.25)
+        isOpen ? 1.0 : 0.0
     }
 
     private var isExpanded: Bool {
-        currentProgress > 0.4
+        isOpen
     }
 
     // MARK: - Body
@@ -99,6 +105,33 @@ public struct MomentFolder<CardContent: View>: View {
                 folderZStack
             } else {
                 folderZStack
+                    .scaleEffect(isHolding ? 0.97 : 1.0)
+                    .animation(.easeOut(duration: 0.16), value: isHolding)
+                    .onLongPressGesture(
+                        minimumDuration: 0.28,
+                        maximumDistance: 15,
+                        perform: {
+                            didTriggerReveal = true
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.42, dampingFraction: 0.72, blendDuration: 0)) {
+                                isOpen = true
+                            }
+                        },
+                        onPressingChanged: { isPressing in
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                self.isHolding = isPressing
+                            }
+                            if !isPressing {
+                                // Hold is over: auto unreveal items so they reveal only as long as pressed!
+                                if isOpen || didTriggerReveal {
+                                    didTriggerReveal = false
+                                    withAnimation(.spring(response: 0.42, dampingFraction: 0.76, blendDuration: 0)) {
+                                        isOpen = false
+                                    }
+                                }
+                            }
+                        }
+                    )
                     .onTapGesture {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         if let customAction = onTapFolder {
@@ -109,24 +142,6 @@ public struct MomentFolder<CardContent: View>: View {
                             }
                         }
                     }
-                    .gesture(
-                        DragGesture()
-                            .updating($dragOffset) { value, state, _ in
-                                state = value.translation.height
-                            }
-                            .onEnded { value in
-                                let predictedEnd = value.predictedEndTranslation.height
-                                withAnimation(.spring(response: 0.45, dampingFraction: 0.72, blendDuration: 0)) {
-                                    if predictedEnd < -30 {
-                                        isOpen = true
-                                    } else if predictedEnd > 30 {
-                                        isOpen = false
-                                    } else {
-                                        isOpen = currentProgress > 0.5
-                                    }
-                                }
-                            }
-                    )
             }
         }
     }
@@ -325,7 +340,12 @@ public struct MomentFolder<CardContent: View>: View {
         .zIndex(Double(index))
         .onTapGesture {
             if isExpanded {
-                onTapItem?(item)
+                if let customItemTap = onTapItem {
+                    customItemTap(item)
+                } else if let customAction = onTapFolder {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    customAction()
+                }
             } else {
                 if let customAction = onTapFolder {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -342,98 +362,178 @@ public struct MomentFolder<CardContent: View>: View {
     // MARK: - Layer 3: Front Folder Cover
 
     private var frontCoverLayer: some View {
-        FolderCoverShape()
-            // 1. BACKGROUND BLUR: progressive, start 0, end 40
-            .fill(.ultraThinMaterial)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .black.opacity(0.45), location: 0.35),
-                        .init(color: .black, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
+        ZStack(alignment: .bottomTrailing) {
+            FolderCoverShape()
+                // 1. BACKGROUND BLUR: progressive, start 0, end 40
+                .fill(.ultraThinMaterial)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black.opacity(0.45), location: 0.35),
+                            .init(color: .black, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 )
-            )
-            .background(
-                FolderCoverShape()
-                    .fill(.thinMaterial)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.20),
-                                .init(color: .black.opacity(0.80), location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                .background(
+                    FolderCoverShape()
+                        .fill(.thinMaterial)
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0.20),
+                                    .init(color: .black.opacity(0.80), location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
-                    )
-            )
-            // 2. FILL: linear top to bottom (adaptive smoked acrylic in dark mode vs Figma frosted white in light mode)
-            .overlay(
-                FolderCoverShape()
-                    .fill(
-                        LinearGradient(
-                            stops: colorScheme == .dark ? [
-                                .init(color: Color(white: 0.32), location: 0.0),
-                                .init(color: Color(white: 0.20), location: 0.66),
-                                .init(color: Color(white: 0.16), location: 1.0)
-                            ] : [
-                                .init(color: Color(red: 230/255, green: 230/255, blue: 230/255), location: 0.0),
-                                .init(color: Color.white, location: 0.66),
-                                .init(color: Color.white, location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                )
+                // 2. FILL: linear top to bottom (adaptive smoked acrylic in dark mode vs Figma frosted white in light mode)
+                .overlay(
+                    FolderCoverShape()
+                        .fill(
+                            LinearGradient(
+                                stops: colorScheme == .dark ? [
+                                    .init(color: Color(white: 0.32), location: 0.0),
+                                    .init(color: Color(white: 0.20), location: 0.66),
+                                    .init(color: Color(white: 0.16), location: 1.0)
+                                ] : [
+                                    .init(color: Color(red: 230/255, green: 230/255, blue: 230/255), location: 0.0),
+                                    .init(color: Color.white, location: 0.66),
+                                    .init(color: Color.white, location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
-                    )
-                    .opacity(colorScheme == .dark ? 0.45 : 0.60)
-            )
-            // 3. NOISE: x 0.64, density 69%, 6C6C6C 10%
-            .overlay(
-                FolderCoverShape()
-                    .fill(ImagePaint(image: Image(uiImage: NoiseTexture.coverNoiseImage), scale: 0.64))
-                    .opacity(0.10)
-            )
-            // 5. INNER SHADOW: y 0.8, blur 3
-            .overlay(
-                FolderCoverShape()
-                    .stroke(colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.25), lineWidth: 2.0)
-                    .blur(radius: 3.0)
-                    .offset(y: 0.8)
-                    .mask(FolderCoverShape())
-            )
-            // 6. SPECULAR STROKE
-            .overlay(
-                FolderCoverShape()
-                    .stroke(
-                        LinearGradient(
-                            stops: colorScheme == .dark ? [
-                                .init(color: Color.white.opacity(0.40), location: 0.0),
-                                .init(color: Color.white.opacity(0.18), location: 0.35),
-                                .init(color: Color.white.opacity(0.04), location: 1.0)
-                            ] : [
-                                .init(color: Color.white.opacity(0.75), location: 0.0),
-                                .init(color: Color.white.opacity(0.35), location: 0.35),
-                                .init(color: Color.white.opacity(0.08), location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 0.85
-                    )
-            )
-            
-            // 3D perspective: subtly tilts forward on open to expose the pocket interior
-            .rotation3DEffect(
-                .degrees(isExpanded ? -30.0 * currentProgress : 0),
-                axis: (x: 1.0, y: 0.0, z: 0.0),
-                anchor: .bottom,
-                perspective: 0.6
-            )
-            .offset(y: isExpanded ? (size.height * 0.025 * currentProgress) : 0)
-            .frame(width: size.width, height: coverHeight)
+                        .opacity(colorScheme == .dark ? 0.45 : 0.60)
+                )
+                // 3. NOISE: x 0.64, density 69%, 6C6C6C 10%
+                .overlay(
+                    FolderCoverShape()
+                        .fill(ImagePaint(image: Image(uiImage: NoiseTexture.coverNoiseImage), scale: 0.64))
+                        .opacity(0.10)
+                )
+                // 5. INNER SHADOW: y 0.8, blur 3
+                .overlay(
+                    FolderCoverShape()
+                        .stroke(colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.25), lineWidth: 2.0)
+                        .blur(radius: 3.0)
+                        .offset(y: 0.8)
+                        .mask(FolderCoverShape())
+                )
+                // 6. SPECULAR STROKE
+                .overlay(
+                    FolderCoverShape()
+                        .stroke(
+                            LinearGradient(
+                                stops: colorScheme == .dark ? [
+                                    .init(color: Color.white.opacity(0.40), location: 0.0),
+                                    .init(color: Color.white.opacity(0.18), location: 0.35),
+                                    .init(color: Color.white.opacity(0.04), location: 1.0)
+                                ] : [
+                                    .init(color: Color.white.opacity(0.75), location: 0.0),
+                                    .init(color: Color.white.opacity(0.35), location: 0.35),
+                                    .init(color: Color.white.opacity(0.08), location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.85
+                        )
+                )
+
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let symbol = categoryBadgeSymbol {
+                folderBadge(
+                    symbol: symbol,
+                    rotation: 6,
+                    accessibilityLabel: "\(category ?? "Category") Moment"
+                )
+                .padding(.leading, size.width * 0.095)
+                .padding(.bottom, size.height * 0.095)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if isShared {
+                sharedFolderBadge
+                    .padding(.trailing, size.width * 0.065)
+                    .padding(.bottom, size.height * 0.055)
+            }
+        }
+        // 3D perspective: subtly tilts forward on open to expose the pocket interior
+        .rotation3DEffect(
+            .degrees(isExpanded ? -30.0 * currentProgress : 0),
+            axis: (x: 1.0, y: 0.0, z: 0.0),
+            anchor: .bottom,
+            perspective: 0.6
+        )
+        .offset(y: isExpanded ? (size.height * 0.025 * currentProgress) : 0)
+        .frame(width: size.width, height: coverHeight)
+    }
+
+    // MARK: - Folder Badges
+
+    /// Resolves SF Symbol for the folder's category
+    private var categoryBadgeSymbol: String? {
+        guard let cat = category, !cat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return MomentCategory.symbol(for: cat)
+    }
+
+    /// Generic badge renderer with multi-directional white stroke outline and fill matching folderColor,
+    /// creating a vibrant, tactile sticker aesthetic.
+    private func folderBadge(
+        symbol: String,
+        fillColor: Color? = nil,
+        rotation: Double = 0,
+        accessibilityLabel: String
+    ) -> some View {
+        let iconSize = size.width * 0.225
+        let strokeRadius: CGFloat = 2.8
+        let badgeFill = fillColor ?? folderColor ?? Color.black
+
+        return ZStack {
+            // White stroke outline: dense multi-directional sampling for continuous coverage
+            ForEach(0..<24, id: \.self) { i in
+                let angle = Double(i) * (2.0 * .pi / 24.0)
+                Image(systemName: symbol)
+                    .font(.system(size: iconSize, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .offset(x: cos(angle) * strokeRadius, y: sin(angle) * strokeRadius)
+            }
+            ForEach(0..<16, id: \.self) { i in
+                let angle = Double(i) * (2.0 * .pi / 16.0)
+                Image(systemName: symbol)
+                    .font(.system(size: iconSize, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .offset(x: cos(angle) * (strokeRadius * 0.55), y: sin(angle) * (strokeRadius * 0.55))
+            }
+
+            // Core fill matching folder color (or black fallback when default/nil)
+            Image(systemName: symbol)
+                .font(.system(size: iconSize, weight: .bold))
+                .foregroundStyle(badgeFill)
+        }
+        .rotationEffect(.degrees(rotation))
+        .shadow(color: Color.black.opacity(0.22), radius: 3.5, x: 0, y: 2)
+        .allowsHitTesting(false)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// Crisp person.2.fill badge with white stroke outline and folderColor fill,
+    /// positioned at the bottom-right of the front frosted flap matching reference design.
+    private var sharedFolderBadge: some View {
+        folderBadge(
+            symbol: "person.2.fill",
+            rotation: -6,
+            accessibilityLabel: "Shared Moment"
+        )
     }
 
     // MARK: - Helper Closed Coordinates
@@ -494,9 +594,14 @@ public struct DefaultFolderCardView: View {
         }()
 
         ZStack {
-            // Card background: image or gradient
             if let uiImage = resolvedImage {
                 Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else if let imageName = item.imageName {
+                Image(imageName)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)

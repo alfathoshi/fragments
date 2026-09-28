@@ -18,7 +18,7 @@ public struct StartMomentView: View {
     @State private var date: Date = Date()
     @State private var isCreating: Bool = false
 
-    private let vibeOptions = ["Life", "Travel", "Friends", "Nature", "Creative", "Quiet"]
+    private let vibeOptions = MomentCategory.allCategoryNames
 
     public init(onMomentStarted: ((FolderCollection) -> Void)? = nil) {
         self.onMomentStarted = onMomentStarted
@@ -57,17 +57,23 @@ public struct StartMomentView: View {
                                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                             selectedVibe = vibe
                                         } label: {
-                                            Text(vibe)
-                                                .font(.system(size: 13, weight: selectedVibe == vibe ? .bold : .medium, design: .rounded))
-                                                .padding(.horizontal, 14)
-                                                .padding(.vertical, 8)
-                                                .background(
-                                                    selectedVibe == vibe
-                                                        ? AnyShapeStyle(selectedTheme.color ?? Color.blue)
-                                                        : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
-                                                    in: Capsule()
-                                                )
-                                                .foregroundStyle(selectedVibe == vibe ? .white : .primary)
+                                            HStack(spacing: 6) {
+                                                if let symbol = MomentCategory.symbol(for: vibe) {
+                                                    Image(systemName: symbol)
+                                                        .font(.system(size: 12, weight: .semibold))
+                                                }
+                                                Text(vibe)
+                                                    .font(.system(size: 13, weight: selectedVibe == vibe ? .bold : .medium, design: .rounded))
+                                            }
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                selectedVibe == vibe
+                                                    ? AnyShapeStyle(selectedTheme.color ?? Color.blue)
+                                                    : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
+                                                in: Capsule()
+                                            )
+                                            .foregroundStyle(selectedVibe == vibe ? .white : .primary)
                                         }
                                         .buttonStyle(PlainButtonStyle())
                                     }
@@ -165,7 +171,8 @@ public struct StartMomentView: View {
             location: location,
             date: Date(),
             items: [],
-            color: selectedTheme.color
+            color: selectedTheme.color,
+            category: selectedVibe
         )
 
         onMomentStarted?(newCollection)

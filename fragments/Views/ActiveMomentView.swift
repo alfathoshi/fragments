@@ -10,8 +10,12 @@ import SwiftUI
 struct ActiveMomentView: View {
     var onDismiss: () -> Void
     var onSaveComplete: () -> Void
+    var initialCaptureType: FragmentType?
+    var autoOpenEnd: Bool
 
     @State private var viewModel: ActiveMomentViewModel
+    @State private var copiedCodeFeedback: Bool = false
+    @State private var showLeaveConfirmation: Bool = false
     @Environment(\.colorScheme) private var colorScheme
 
     init(
@@ -23,6 +27,8 @@ struct ActiveMomentView: View {
     ) {
         self.onDismiss = onDismiss
         self.onSaveComplete = onSaveComplete
+        self.initialCaptureType = initialCaptureType
+        self.autoOpenEnd = autoOpenEnd
         self._viewModel = State(initialValue: ActiveMomentViewModel(
             momentManager: momentManager,
             initialCaptureType: initialCaptureType,
@@ -83,17 +89,41 @@ struct ActiveMomentView: View {
                                 .foregroundStyle(.primary)
                         }
                     }
+                    
+                    ToolbarItem(placement: .topBarTrailing) {
+                            if viewModel.session?.isShared == true {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    viewModel.showAddPeopleSheet = true
+                                } label: {
+                                    Image(systemName: "person.badge.plus")
+                                        .font(.system(size: 13, weight: .bold))
+                                }
+                            }
+                    }
 
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            viewModel.showEndMomentSheet = true
-                        } label: {
-                            Text("Save Moment")
-                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                        if viewModel.isHost {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                viewModel.showEndMomentSheet = true
+                            } label: {
+                                Text("Save Moment")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                            }
+                            .glassProminentButtonStyle()
+                            .tint(.primary)
+                        } else {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                showLeaveConfirmation = true
+                            } label: {
+                                Text("Leave Moment")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                            }
+                            .glassProminentButtonStyle()
+                            .tint(.red)
                         }
-                        .glassProminentButtonStyle()
-                        .tint(.primary)
                     }
                 }
             }
@@ -129,8 +159,17 @@ struct ActiveMomentView: View {
                     }
                 }(),
                 activeSession: viewModel.momentManager.activeSession,
+                captureContext: {
+                    if let room = viewModel.session?.room, viewModel.session?.isShared == true {
+                        return .room(room)
+                    }
+                    return .personal
+                }(),
                 onCaptureFragment: { newFragment in
                     viewModel.handleCapturedFragment(newFragment)
+                },
+                onCaptureSharedFragment: { sharedFragment in
+                    viewModel.handleCapturedSharedFragment(sharedFragment)
                 },
                 onClose: {
                     viewModel.showCaptureSheet = false
@@ -142,6 +181,12 @@ struct ActiveMomentView: View {
                     }
                 }
             )
+        }
+        // Add People Sheet for Shared Moment
+        .sheet(isPresented: $viewModel.showAddPeopleSheet) {
+            if let room = viewModel.session?.room {
+                RoomMembersSheet(room: room)
+            }
         }
         // Direct Sheet for EndMomentSheet from within ActiveMomentView
         .sheet(isPresented: $viewModel.showEndMomentSheet) {
@@ -187,12 +232,62 @@ struct ActiveMomentView: View {
         } message: {
             Text("A moment can contain a maximum of 15 fragments. You have reached the limit for this moment.")
         }
+        .alert(
+            "Leave Moment?",
+            isPresented: $showLeaveConfirmation
+        ) {
+            Button("Cancel", role: .cancel) { }
+            Button("Leave", role: .destructive) {
+                viewModel.leaveSession()
+                onDismiss()
+            }
+        } message: {
+            Text("Are you sure you want to leave this shared moment? The host can continue and save the moment.")
+        }
+        .onChange(of: viewModel.momentManager.activeSession == nil) { _, isNil in
+            if isNil {
+                onDismiss()
+            }
+        }
+        .onAppear {
+            viewModel.startSyncObserver()
+            if let initType = initialCaptureType {
+                viewModel.openCaptureSheet(type: initType)
+            } else if autoOpenEnd {
+                viewModel.showEndMomentSheet = true
+            }
+        }
+        .onChange(of: initialCaptureType) { _, newType in
+            if let newType {
+                viewModel.openCaptureSheet(type: newType)
+            }
+        }
+        .onChange(of: autoOpenEnd) { _, shouldOpenEnd in
+            if shouldOpenEnd {
+                viewModel.showEndMomentSheet = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenActiveMomentCapture"))) { notif in
+            if let type = notif.object as? FragmentType {
+                viewModel.openCaptureSheet(type: type)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RequestEndMoment"))) { _ in
+            viewModel.showCaptureSheet = false
+            viewModel.showEndMomentSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RequestLeaveMoment"))) { _ in
+            viewModel.showCaptureSheet = false
+            showLeaveConfirmation = true
+        }
+        .onDisappear {
+            viewModel.stopSyncObserver()
+        }
     }
 
     // MARK: - Top Session Header
     private func sessionHeader(session: MomentSession) -> some View {
-        HStack(spacing: 12) {
-
+        HStack(spacing: 10) {
             // Live Elapsed Time
             HStack(spacing: 5) {
                 Image(systemName: "clock")
@@ -206,29 +301,65 @@ struct ActiveMomentView: View {
                 }
             }
 
+            if session.isShared, let room = session.room {
+                // Quick Room Code Tap-to-Copy Pill
+                let shortCode = room.backend == .supabase
+                    ? (room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased())
+                    : String(room.id.prefix(8)).uppercased()
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    UIPasteboard.general.string = shortCode
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        copiedCodeFeedback = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            copiedCodeFeedback = false
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: copiedCodeFeedback ? "checkmark.circle.fill" : "number")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(copiedCodeFeedback ? .green : .secondary)
+                        Text(copiedCodeFeedback ? "Copied" : shortCode)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundStyle(copiedCodeFeedback ? .green : .primary)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
             Spacer()
 
             // Fragment Count
             HStack(spacing: 4) {
                 Image(systemName: "square.stack.3d.up.fill")
                     .font(.system(size: 11))
-                    .foregroundStyle(session.isAtCapacity ? .orange : .secondary)
+                    .foregroundStyle(session.isAtCapacity && !session.isShared ? .orange : .secondary)
 
-                Text("\(session.fragmentCount)/\(MomentSession.maxFragments) fragments")
+                Text(session.isShared
+                     ? "\(session.fragmentCount) \(session.fragmentCount == 1 ? "fragment" : "fragments")"
+                     : "\(session.fragmentCount)/\(MomentSession.maxFragments) fragments")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(session.isAtCapacity ? .orange : .primary)
+                    .foregroundStyle(session.isAtCapacity && !session.isShared ? .orange : .primary)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 6)
     }
 
     // MARK: - Bottom Floating ThinkingOrb Dock
     private func bottomFloatingOrbDock(session: MomentSession) -> some View {
-        Button {
+        let isFull = session.isAtCapacity && !session.isShared
+
+        return Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            if session.isAtCapacity {
+            if isFull {
                 viewModel.showLimitAlert = true
             } else {
                 viewModel.openCaptureSheet(type: .photo)
@@ -239,20 +370,20 @@ struct ActiveMomentView: View {
                 ThinkingOrb(state: .connecting, size: 48)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.isAtCapacity ? "Limit Reached" : "Capture Fragment")
+                    Text(isFull ? "Limit Reached" : (session.isShared ? "Capture Fragment" : "Capture Fragment"))
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
 
-                    Text(session.isAtCapacity ? "Max 15 fragments reached" : "Tap to add fragments...")
+                    Text(isFull ? "Max 15 fragments reached" :  "Tap to add fragments...")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Image(systemName: session.isAtCapacity ? "exclamationmark.circle.fill" : "plus.circle.fill")
+                Image(systemName: isFull ? "exclamationmark.circle.fill" : "plus.circle.fill")
                     .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(session.isAtCapacity ? .orange : .primary)
+                    .foregroundStyle(isFull ? .orange : .primary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

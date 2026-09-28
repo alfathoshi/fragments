@@ -12,8 +12,6 @@ public struct FragmentNode: View {
     public let normalizedZ: CGFloat
     public var onTap: (() -> Void)? = nil
 
-    @State private var isPressed = false
-
     public init(
         fragment: Fragment,
         normalizedZ: CGFloat = 1.0,
@@ -25,17 +23,13 @@ public struct FragmentNode: View {
     }
 
     public var body: some View {
-        Button {
-            onTap?()
-        } label: {
-            contentForType
-                .frame(width: fragment.baseSize.width, height: fragment.baseSize.height)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .scaleEffect(isPressed ? 0.94 : 1.0)
-                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isPressed)
-        }
-        .buttonStyle(NodeButtonStyle(isPressed: $isPressed))
+        contentForType
+            .frame(width: fragment.baseSize.width, height: fragment.baseSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .onTapGesture {
+                onTap?()
+            }
     }
 
     // MARK: - Node Content by Type
@@ -327,18 +321,5 @@ public struct FragmentNode: View {
             radius: 12,
             y: 6
         )
-    }
-}
-
-// MARK: - Custom Button Style for Gentle Tap Feedback
-
-private struct NodeButtonStyle: ButtonStyle {
-    @Binding var isPressed: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .onChange(of: configuration.isPressed) { _, newValue in
-                isPressed = newValue
-            }
     }
 }
