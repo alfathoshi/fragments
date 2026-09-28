@@ -292,7 +292,6 @@ public struct ProfileView: View {
             }
 
             Divider()
-                .padding(.leading, 64)
 
             // Sign Out
             actionRow(
