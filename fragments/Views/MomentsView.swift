@@ -110,6 +110,7 @@ struct MomentsView: View {
                 .navigationTitle("Moments")
                 .toolbarTitleDisplayMode(.inlineLarge)
                 .toolbar {
+
                     if !allMoments.isEmpty {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button {

@@ -174,9 +174,17 @@ public struct RoomMembersSheet: View {
     }
 
     private func memberRow(_ member: RoomMember) -> some View {
-        let currentUserId = identityService.currentUserIdentity?.id ?? "local_user"
-        let currentUserName = identityService.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
-        let isCurrent = (member.userId == currentUserId) || (member.displayName == currentUserName)
+        let isCurrent: Bool = {
+            if room.backend == .supabase {
+                if let currentUserID = identityService.collaborativeUserID {
+                    return member.userId.caseInsensitiveCompare(currentUserID) == .orderedSame
+                }
+                return false
+            }
+            let currentUserId = identityService.currentUserIdentity?.id ?? "local_user"
+            let currentUserName = identityService.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+            return (member.userId == currentUserId) || (member.displayName == currentUserName)
+        }()
 
         return HStack(spacing: 12) {
             // Avatar Circle

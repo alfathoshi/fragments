@@ -26,6 +26,9 @@ public struct ProfileView: View {
     @State private var showContactFallbackAlert = false
     @State private var showCopiedNotification = false
     @State private var showCloudKitDebug = false
+    @State private var showSignOutAlert = false
+    @State private var showDeleteAccountAlert = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = true
     @State private var supabaseService = SupabaseService.shared
 
     public init(profileManager: ProfileManager = ProfileManager.shared) {
@@ -46,11 +49,10 @@ public struct ProfileView: View {
                     profileHeaderView
                         .padding(.top, 16)
 
-                    // 2. Supabase Account & Remote Authentication
-                    supabaseAccountSectionView
-
                     // 3. Sections: Rate Us, Contact Us, Privacy Policy
                     actionsSectionView
+                    
+                    accountSectionView
 
                     // 4. Bottom: Made by Alfathoshi, App Icon, App Name & Copyright
                     bottomAppIconView
@@ -87,6 +89,22 @@ public struct ProfileView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("Could not launch Mail app. You can copy alfathbintangmuhammad@gmail.com to your clipboard.")
+            }
+            .confirmationDialog("Sign Out", isPresented: $showSignOutAlert, titleVisibility: .visible) {
+                Button("Sign Out", role: .destructive) {
+                    handleSignOut()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Are you sure you want to sign out of Fragments?")
+            }
+            .confirmationDialog("Delete Account", isPresented: $showDeleteAccountAlert, titleVisibility: .visible) {
+                Button("Delete Account", role: .destructive) {
+                    handleDeleteAccount()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Are you sure you want to delete your account? All your local data and cloud fragments will be permanently removed.")
             }
             .sheet(isPresented: $isEditingProfile) {
                 editProfileSheet
@@ -205,76 +223,16 @@ public struct ProfileView: View {
         )
     }
 
-    // MARK: - 2. Supabase Account Section
-    private var supabaseAccountSectionView: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(supabaseService.isAuthenticated ? Color.green.opacity(0.12) : Color.primary.opacity(0.06))
-                        .frame(width: 36, height: 36)
 
-                    Image(systemName: supabaseService.isAuthenticated ? "apple.logo" : "person.badge.key.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(supabaseService.isAuthenticated ? Color.green : Color.primary)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(supabaseService.isAuthenticated ? "Connected to Supabase" : "Remote Identity")
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.primary)
-
-                    if let user = supabaseService.currentUser {
-                        Text("UUID: \(user.id.uuidString.prefix(8))...")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Sign in to enable remote collaborative Moments")
-                            .font(.system(size: 12, weight: .regular, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Spacer()
-
-                if supabaseService.isAuthenticated {
-                    Button(role: .destructive) {
-                        triggerHaptic()
-                        Task {
-                            try? await supabaseService.signOut()
-                        }
-                    } label: {
-                        Text("Sign Out")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.red.opacity(0.1), in: Capsule())
-                    }
-                }
-            }
-
-            if !supabaseService.isAuthenticated {
-                SignInWithAppleView()
-                    .padding(.top, 4)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
-        )
-    }
-
-    // MARK: - 3. Action Section (Rate Us, Contact Us, Privacy Policy)
+    // MARK: - 2. Actions (Rate Us, Contact Us, Privacy Policy)
     private var actionsSectionView: some View {
         VStack(spacing: 0) {
             // Rate Us
             actionRow(
                 icon: "star.fill",
-                iconColor: Color.orange,
+                iconColor: colorScheme == .dark ? Color.black : Color.white,
                 title: "Rate Us",
-                showDisclosure: true
+                disclosureIcon: "arrow.up.forward"
             ) {
                 triggerHaptic()
                 if let url = URL(string: "https://apps.apple.com/app/id6812455792?action=write-review") {
@@ -283,51 +241,69 @@ public struct ProfileView: View {
             }
 
             Divider()
-                .padding(.leading, 56)
+                .padding(.leading, 64)
 
             // Contact Us
             actionRow(
                 icon: "envelope.fill",
-                iconColor: Color.blue,
+                iconColor: colorScheme == .dark ? Color.black : Color.white,
                 title: "Contact Us",
-                subtitle: "alfathbintangmuhammad@gmail.com",
-                showDisclosure: true
+                subtitle: "fraqmentsapp@gmail.com",
+                disclosureIcon: "arrow.up.forward"
             ) {
                 triggerHaptic()
                 openContactEmail()
             }
 
             Divider()
-                .padding(.leading, 56)
+                .padding(.leading, 64)
 
             // Privacy Policy
             actionRow(
                 icon: "hand.raised.fill",
-                iconColor: Color.green,
+                iconColor: colorScheme == .dark ? Color.black : Color.white,
                 title: "Privacy Policy",
-                showDisclosure: true
+                disclosureIcon: "arrow.up.forward"
             ) {
                 triggerHaptic()
                 if let url = URL(string: "https://alfathoshi.vercel.app/privacy/fragments") {
                     openURL(url)
                 }
             }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        )
+    }
 
-            #if DEBUG
-            Divider()
-                .padding(.leading, 56)
-
+    // MARK: - 3. Account (Delete Account, Sign Out)
+    private var accountSectionView: some View {
+        VStack(spacing: 0) {
+            // Delete Account
             actionRow(
-                icon: "icloud.fill",
-                iconColor: Color.purple,
-                title: "CloudKit Rooms Debug",
-                subtitle: "Multi-user Phase 6 test harness",
-                showDisclosure: true
+                iconColor: Color.red,
+                title: "Delete Account",
+                disclosureIcon: nil,
+                isDestructive: true
             ) {
                 triggerHaptic()
-                showCloudKitDebug = true
+                showDeleteAccountAlert = true
             }
-            #endif
+
+            Divider()
+                .padding(.leading, 64)
+
+            // Sign Out
+            actionRow(
+                iconColor: Color(red: 0.95, green: 0.40, blue: 0.40),
+                title: "Sign Out",
+                disclosureIcon: nil,
+                isDestructive: true
+            ) {
+                triggerHaptic()
+                showSignOutAlert = true
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -337,30 +313,35 @@ public struct ProfileView: View {
 
     // Row Helper
     private func actionRow(
-        icon: String,
+        icon: String? = nil,
         iconColor: Color,
         title: String,
         subtitle: String? = nil,
         badge: String? = nil,
-        showDisclosure: Bool = true,
+        disclosureIcon: String? = "arrow.up.forward",
+        isDestructive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                // Icon Box
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .frame(width: 34, height: 34)
-                    .overlay(
-                        Image(systemName: icon)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.background)
-                    )
+                // Icon Box with filled background color
+                if let icon = icon {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(iconColor)
+                        .frame(width: 34, height: 34)
+                        .overlay(
+                            Image(systemName: icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                        )
+                }
+                
 
                 // Title and Subtitle
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 16, weight: .medium, design: .rounded))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(isDestructive ? Color.red : Color.primary)
 
                     if let subtitle = subtitle {
                         Text(subtitle)
@@ -382,8 +363,8 @@ public struct ProfileView: View {
                         .background(Color.primary.opacity(0.06), in: Capsule())
                 }
 
-                if showDisclosure {
-                    Image(systemName: "arrow.up.forward")
+                if let disclosure = disclosureIcon {
+                    Image(systemName: disclosure)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color(uiColor: .tertiaryLabel))
                 }
@@ -480,6 +461,24 @@ public struct ProfileView: View {
             }
         } else {
             showContactFallbackAlert = true
+        }
+    }
+
+    private func handleSignOut() {
+        triggerHaptic()
+        Task {
+            try? await supabaseService.signOut()
+            hasCompletedOnboarding = false
+            dismiss()
+        }
+    }
+
+    private func handleDeleteAccount() {
+        triggerHaptic()
+        Task {
+            try? await supabaseService.signOut()
+            hasCompletedOnboarding = false
+            dismiss()
         }
     }
 

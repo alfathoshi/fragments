@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct fragmentsApp: App {
     @State private var isSplashScreenDone: Bool = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -81,6 +82,41 @@ struct fragmentsApp: App {
                 print(log)
             }
             print("=== RESULT (PHASE 2C-1): \(passed6 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+            let (passed7, logs7) = await RealtimeConvergenceVerifier.runAllTests()
+            print("=== SUPABASE REALTIME CONVERGENCE VERIFICATION (PHASE 1) ===")
+            for log in logs7 {
+                print(log)
+            }
+            print("=== RESULT (PHASE 1 CONVERGENCE): \(passed7 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+            let (passed8, logs8) = await RemoteMediaVerifier.runAllTests()
+            print("=== REMOTE MEDIA DOWNLOAD & LOCAL CACHE VERIFICATION (PHASE 2) ===")
+            for log in logs8 {
+                print(log)
+            }
+            print("=== RESULT (PHASE 2 REMOTE MEDIA): \(passed8 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+            let (passed9, logs9) = await UnifiedIdentityVerifier.runAllTests()
+            print("=== UNIFIED SUPABASE IDENTITY VERIFICATION (PHASE 3) ===")
+            for log in logs9 {
+                print(log)
+            }
+            print("=== RESULT (PHASE 3 UNIFIED IDENTITY): \(passed9 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+            let (passed10, logs10) = await PersonalFragmentSharingVerifier.runAllTests()
+            print("=== PERSONAL FRAGMENT TO ROOM SHARING VERIFICATION (PHASE 4) ===")
+            for log in logs10 {
+                print(log)
+            }
+            print("=== RESULT (PHASE 4 SHARING): \(passed10 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
+            let (passed11, logs11) = await CollaborativeP0Verifier.runAllTests()
+            print("=== COLLABORATIVE P0 BLOCKERS VERIFICATION (P0-1, P0-2, P0-3) ===")
+            for log in logs11 {
+                print(log)
+            }
+            print("=== RESULT (COLLABORATIVE P0): \(passed11 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
         }
 
         let allLogs = (logs1 + logs2 + logs3 + logs4).joined(separator: "\n")
@@ -93,8 +129,19 @@ struct fragmentsApp: App {
         WindowGroup {
             ZStack {
                 if isSplashScreenDone {
-                    ContentView()
+                    if hasCompletedOnboarding {
+                        ContentView()
+                            .transition(.opacity)
+                    } else {
+                        OnboardingView { result in
+                            if case .success = result {
+                                withAnimation(.easeInOut(duration: 0.45)) {
+                                    hasCompletedOnboarding = true
+                                }
+                            }
+                        }
                         .transition(.opacity)
+                    }
                 } else {
                     SplashScreenView {
                         withAnimation(.easeInOut(duration: 0.45)) {

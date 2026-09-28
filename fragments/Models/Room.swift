@@ -30,6 +30,9 @@ public struct Room: Identifiable, Hashable, Sendable, Codable {
     /// The name of the custom CKRecordZone where room data lives.
     public var zoneName: String?
 
+    /// Whether the Room has been ended by the host.
+    public var isEnded: Bool
+
     /// Whether the Room is archived by the owner.
     public var isArchived: Bool
 
@@ -42,6 +45,12 @@ public struct Room: Identifiable, Hashable, Sendable, Codable {
     /// Optional theme accent color stored as hex string (e.g. "#FF5733").
     public var accentColorHex: String?
 
+    /// Final title given to the session when it ended.
+    public var finalTitle: String?
+
+    /// Final category assigned to the session when it ended.
+    public var finalCategory: String?
+
     public init(
         id: String = UUID().uuidString,
         name: String,
@@ -50,10 +59,13 @@ public struct Room: Identifiable, Hashable, Sendable, Codable {
         createdBy: String,
         shareRecordID: String? = nil,
         zoneName: String? = nil,
+        isEnded: Bool = false,
         isArchived: Bool = false,
         memberCount: Int = 1,
         fragmentCount: Int = 0,
-        accentColorHex: String? = nil
+        accentColorHex: String? = nil,
+        finalTitle: String? = nil,
+        finalCategory: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -62,10 +74,13 @@ public struct Room: Identifiable, Hashable, Sendable, Codable {
         self.createdBy = createdBy
         self.shareRecordID = shareRecordID
         self.zoneName = zoneName
+        self.isEnded = isEnded
         self.isArchived = isArchived
         self.memberCount = memberCount
         self.fragmentCount = fragmentCount
         self.accentColorHex = accentColorHex
+        self.finalTitle = finalTitle
+        self.finalCategory = finalCategory
     }
 
     /// Identifies the remote synchronization backend responsible for this Room.

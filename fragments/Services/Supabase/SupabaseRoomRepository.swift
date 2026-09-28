@@ -245,6 +245,29 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
         }
     }
 
+    // MARK: - User Profile Reads
+
+    /// Fetches the profile display name and avatar path for a specific user ID.
+    public func fetchUserProfile(userID: UUID) async throws -> (displayName: String, avatarStoragePath: String?) {
+        _ = try await currentAuthenticatedUser()
+        do {
+            let result: [DatabaseMemberProfile] = try await client
+                .from("profiles")
+                .select("display_name, avatar_storage_path")
+                .eq("id", value: userID)
+                .limit(1)
+                .execute()
+                .value
+
+            if let first = result.first, let name = first.display_name, !name.isEmpty {
+                return (name, first.avatar_storage_path)
+            }
+            return ("Member", nil)
+        } catch {
+            throw mapError(error)
+        }
+    }
+
     // MARK: - Fragment Reads
 
     public func fetchFragments(roomID: String) async throws -> [SharedFragment] {
@@ -291,7 +314,17 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
 
         guard let fragmentUUID = UUID(uuidString: fragment.id),
               let roomUUID = UUID(uuidString: fragment.roomId) else {
-            throw SupabaseRoomError.validationFailure("Invalid Fragment or Room UUID.")
+            throw SupabaseRoomError.validationFailure("Invalid Fragment or Room UUID format.")
+        }
+
+        // Canonical Collaborative Identity Validation:
+        // Ensure fragment.authorId is a valid UUID and strictly matches the authenticated user's ID
+        guard let fragmentAuthorUUID = UUID(uuidString: fragment.authorId) else {
+            throw SupabaseRoomError.validationFailure("Fragment author ID '\(fragment.authorId)' is not a valid UUID format.")
+        }
+
+        guard fragmentAuthorUUID == user.id else {
+            throw SupabaseRoomError.validationFailure("Author identity mismatch: Fragment author '\(fragment.authorId)' does not match authenticated user '\(user.id.uuidString)'.")
         }
 
         let dto = InsertSharedFragmentDTO(
@@ -352,14 +385,21 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
     public func createFragmentWithMedia(_ fragment: SharedFragment) async throws -> SharedFragment {
         let created = try await createFragment(fragment)
         if let localURL = fragment.mediaReference?.localFileURL {
-            let mediaRef = try await createFragmentMedia(
-                fragmentID: fragment.id,
-                roomID: fragment.roomId,
-                localFileURL: localURL
-            )
-            var updated = created
-            updated.mediaReference = mediaRef
-            return updated
+            do {
+                let mediaRef = try await createFragmentMedia(
+                    fragmentID: fragment.id,
+                    roomID: fragment.roomId,
+                    localFileURL: localURL
+                )
+                var updated = created
+                updated.mediaReference = mediaRef
+                return updated
+            } catch {
+                // Media upload or metadata attachment failed. Rollback the created shared_fragments row
+                // to prevent leaving an orphaned fragment record with broken media references.
+                try? await deleteFragment(fragmentID: fragment.id, roomID: fragment.roomId)
+                throw error
+            }
         }
         return created
     }
@@ -438,6 +478,11 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
                     return first.toMediaReference(localURL: localFileURL)
                 }
             }
+
+            // Cleanup uploaded storage binary to avoid leaving orphaned files
+            _ = try? await client.storage
+                .from(Self.mediaBucketName)
+                .remove(paths: [deterministicPath])
 
             // Media exists in storage but DB metadata failed -> partial sync error for deterministic retry
             throw SupabaseRoomError.partialSyncFailure(
@@ -549,14 +594,20 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
             let name: String
             let emoji: String
             let accent_color_hex: String?
+            let is_ended: Bool
             let is_archived: Bool
+            let final_title: String?
+            let final_category: String?
         }
 
         let dto = UpdateRoomDTO(
             name: room.name,
             emoji: room.emoji,
             accent_color_hex: room.accentColorHex,
-            is_archived: room.isArchived
+            is_ended: room.isEnded,
+            is_archived: room.isArchived,
+            final_title: room.finalTitle,
+            final_category: room.finalCategory
         )
 
         do {
@@ -692,10 +743,13 @@ struct DatabaseRoom: Decodable, Sendable {
             createdBy: created_by.uuidString,
             shareRecordID: join_code,
             zoneName: "supabase",
+            isEnded: is_ended,
             isArchived: is_archived,
             memberCount: memberCount,
             fragmentCount: fragmentCount,
-            accentColorHex: accent_color_hex
+            accentColorHex: accent_color_hex,
+            finalTitle: final_title,
+            finalCategory: final_category
         )
     }
 }

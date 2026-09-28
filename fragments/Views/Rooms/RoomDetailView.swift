@@ -43,6 +43,9 @@ public struct RoomDetailView: View {
         if let url = resolvedShareURL ?? activeShare?.url {
             return url
         }
+        if let code = room.shareRecordID, !code.isEmpty {
+            return URL(string: "fragments://room/join?code=\(code)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
+        }
         let encodedName = room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let createdTimestamp = room.createdAt.timeIntervalSince1970
         return URL(string: "fragments://room/join?id=\(room.id)&name=\(encodedName)&createdAt=\(createdTimestamp)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
@@ -138,16 +141,24 @@ public struct RoomDetailView: View {
         .task {
             roomManager.currentRoom = room
             await roomManager.loadRoomDetails(roomID: room.id)
-            if let share = try? await CloudKitRoomRepository.shared.getOrCreateShare(for: room) {
-                self.activeShare = share
-                if let url = share.url {
-                    self.resolvedShareURL = url
+            if room.backend != .supabase {
+                if let share = try? await CloudKitRoomRepository.shared.getOrCreateShare(for: room) {
+                    self.activeShare = share
+                    if let url = share.url {
+                        self.resolvedShareURL = url
+                    }
+                }
+                if self.resolvedShareURL == nil {
+                    if let lookupURL = await CloudKitRoomRepository.shared.lookupShareURL(for: room.id) {
+                        self.resolvedShareURL = lookupURL
+                    }
                 }
             }
-            if self.resolvedShareURL == nil {
-                if let lookupURL = await CloudKitRoomRepository.shared.lookupShareURL(for: room.id) {
-                    self.resolvedShareURL = lookupURL
-                }
+        }
+        .onDisappear {
+            if roomManager.currentRoom?.id == room.id && MomentManager.shared.activeSession?.room?.id != room.id {
+                roomManager.stopRealtime(roomID: room.id)
+                roomManager.currentRoom = nil
             }
         }
     }

@@ -20,7 +20,7 @@ public struct SharedMediaReference: Hashable, Sendable, Codable {
     public var assetKey: String?
 
     /// Canonical remote storage path identifier for Supabase Storage (aliases assetKey).
-    public var storagePath: String? {
+    nonisolated public var storagePath: String? {
         get { assetKey }
         set { assetKey = newValue }
     }
@@ -162,6 +162,19 @@ public struct SharedFragment: Identifiable, Hashable, Sendable, Codable {
             return [type.accentColor, type.accentColor.opacity(0.6)]
         }()
 
+        let resolvedLocalPath: String? = {
+            if let local = mediaReference?.localFileURL, FileManager.default.fileExists(atPath: local.path) {
+                return local.path
+            }
+            if let storagePath = mediaReference?.storagePath, !storagePath.isEmpty {
+                let preferred = mediaReference?.fileExtension.map { "\(id).\($0)" }
+                if let cached = RemoteMediaService.shared.cachedMediaURL(for: storagePath, roomID: roomId, preferredFilename: preferred) {
+                    return cached.path
+                }
+            }
+            return nil
+        }()
+
         return Fragment(
             id: UUID(uuidString: id) ?? UUID(),
             type: type,
@@ -170,7 +183,7 @@ public struct SharedFragment: Identifiable, Hashable, Sendable, Codable {
             subtitle: subtitle ?? authorName,
             text: text,
             mediaSymbol: mediaSymbol,
-            mediaResourceName: mediaReference?.localFileURL?.path,
+            mediaResourceName: resolvedLocalPath,
             gradientColors: colors,
             location: location,
             duration: duration,
@@ -179,6 +192,25 @@ public struct SharedFragment: Identifiable, Hashable, Sendable, Codable {
             theta: theta,
             radiusFactor: radiusFactor
         )
+    }
+
+    /// Indicates whether this SharedFragment was authored by the current user.
+    ///
+    /// Evaluates against the canonical Supabase user ID if authenticated, falling back
+    /// to local/CloudKit user identifier if applicable.
+    @MainActor
+    public var isAuthoredByCurrentUser: Bool {
+        if let currentSupabaseID = UserIdentityService.shared.collaborativeUserID {
+            if authorId.lowercased() == currentSupabaseID.lowercased() {
+                return true
+            }
+        }
+        if let localID = UserIdentityService.shared.currentUserIdentity?.id {
+            if authorId == localID {
+                return true
+            }
+        }
+        return false
     }
 }
 
@@ -190,13 +222,24 @@ extension Fragment {
     public func toSharedFragment(
         roomId: String,
         authorId: String? = nil,
-        authorName: String? = nil
+        authorName: String? = nil,
+        id: String? = nil
     ) -> SharedFragment {
-        let resolvedAuthorId = authorId ?? UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        let resolvedAuthorId: String = {
+            if let explicit = authorId, !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return explicit
+            }
+            if let collabID = UserIdentityService.shared.collaborativeUserID {
+                return collabID
+            }
+            return UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        }()
         let resolvedAuthorName = authorName ?? ProfileManager.shared.signature
 
         let mediaRef: SharedMediaReference? = {
-            if let path = mediaResourceName {
+            if let resolvedURL = self.mediaURL {
+                return SharedMediaReference(localFileURL: resolvedURL, fileExtension: resolvedURL.pathExtension)
+            } else if let path = mediaResourceName {
                 let url = URL(fileURLWithPath: path)
                 return SharedMediaReference(localFileURL: url, fileExtension: url.pathExtension)
             }
@@ -204,7 +247,7 @@ extension Fragment {
         }()
 
         return SharedFragment(
-            id: id.uuidString,
+            id: id ?? self.id.uuidString,
             roomId: roomId,
             authorId: resolvedAuthorId,
             authorName: resolvedAuthorName,
@@ -222,6 +265,22 @@ extension Fragment {
             phi: phi,
             theta: theta,
             radiusFactor: radiusFactor
+        )
+    }
+
+    /// Creates an independent collaborative copy of this personal Fragment with a distinct collaborative ID.
+    @MainActor
+    public func toCollaborativeCopy(
+        forRoomId roomId: String,
+        authorId: String? = nil,
+        authorName: String? = nil,
+        newSharedId: String = UUID().uuidString
+    ) -> SharedFragment {
+        toSharedFragment(
+            roomId: roomId,
+            authorId: authorId,
+            authorName: authorName,
+            id: newSharedId
         )
     }
 }

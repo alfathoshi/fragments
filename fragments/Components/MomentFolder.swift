@@ -594,9 +594,14 @@ public struct DefaultFolderCardView: View {
         }()
 
         ZStack {
-            // Card background: image or gradient
             if let uiImage = resolvedImage {
                 Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else if let imageName = item.imageName {
+                Image(imageName)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)

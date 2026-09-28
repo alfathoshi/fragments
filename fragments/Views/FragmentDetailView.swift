@@ -22,6 +22,9 @@ public struct FragmentDetailView: View {
     @State private var audioPlaybackProgress: Double = 0.0
     @State private var playbackTimer: Timer? = nil
     @State private var showShareSheet: Bool = false
+    @State private var showShareToRoomSheet: Bool = false
+    @State private var showAuthRequiredAlert: Bool = false
+    @State private var shareSuccessToast: String? = nil
     @State private var showDeleteConfirmation: Bool = false
 
     // Real Media Players
@@ -87,10 +90,48 @@ public struct FragmentDetailView: View {
                         removal: .move(edge: .bottom).combined(with: .opacity)
                     )
                 )
+            // Top Success Toast Overlay
+            if let toast = shareSuccessToast {
+                VStack {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.system(size: 16, weight: .bold))
+
+                        Text(toast)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
+                    .padding(.top, 60)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
         .ignoresSafeArea()
         .sheet(isPresented: $showShareSheet) {
             ShareSheet(activityItems: [fragment.title, fragment.text ?? ""])
+        }
+        .sheet(isPresented: $showShareToRoomSheet) {
+            ShareToRoomSheet(fragment: fragment) { sharedRoom in
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                    shareSuccessToast = "Shared to \(sharedRoom.name)"
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    withAnimation {
+                        shareSuccessToast = nil
+                    }
+                }
+            }
+        }
+        .alert("Sign-In Required", isPresented: $showAuthRequiredAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("You must be signed in with your account to share fragments into collaborative rooms.")
         }
         .alert("Delete Fragment?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -601,19 +642,45 @@ public struct FragmentDetailView: View {
                 Spacer()
             }
 
-            // Secondary Actions (Share & Delete)
-            HStack(spacing: 12) {
+            // Actions (Share to Room, System Share, & Delete)
+            VStack(spacing: 8) {
+                // Primary Action: Share to Collaborative Room
                 Button {
-                    showShareSheet = true
+                    handleShareToRoomTapped()
                 } label: {
-                    secondaryButtonLabel(icon: "square.and.arrow.up", title: "Share")
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Share to Room")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.purple.opacity(0.15))
+                    )
+                    .foregroundStyle(Color.purple)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.purple.opacity(0.28), lineWidth: 1)
+                    )
                 }
 
-                if onDelete != nil {
+                // Secondary Actions (Share & Delete)
+                HStack(spacing: 12) {
                     Button {
-                        showDeleteConfirmation = true
+                        showShareSheet = true
                     } label: {
-                        secondaryButtonLabel(icon: "trash", title: "Delete", isDestructive: true)
+                        secondaryButtonLabel(icon: "square.and.arrow.up", title: "Share")
+                    }
+
+                    if onDelete != nil {
+                        Button {
+                            showDeleteConfirmation = true
+                        } label: {
+                            secondaryButtonLabel(icon: "trash", title: "Delete", isDestructive: true)
+                        }
                     }
                 }
             }
@@ -625,6 +692,15 @@ public struct FragmentDetailView: View {
             // Absorb taps on bottom card so it doesn't dismiss
         }
         .adaptiveGlassEffect(.regular, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+
+    private func handleShareToRoomTapped() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if SupabaseService.shared.isAuthenticated && UserIdentityService.shared.collaborativeUserID != nil {
+            showShareToRoomSheet = true
+        } else {
+            showAuthRequiredAlert = true
+        }
     }
 
     private func secondaryButtonLabel(icon: String, title: String, isDestructive: Bool = false) -> some View {

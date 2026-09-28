@@ -47,6 +47,13 @@ public final class RoomManager {
     /// Last error encountered during room operations.
     public private(set) var lastError: String? = nil
 
+    /// Active collaborative Supabase Rooms eligible for publishing personal fragments.
+    public var eligibleSupabaseRooms: [Room] {
+        rooms.filter { room in
+            room.backend == .supabase && !room.isEnded && !room.isArchived
+        }
+    }
+
     // MARK: - Dependencies & Lifecycle
 
     private let localRepository: RoomRepository
@@ -64,7 +71,30 @@ public final class RoomManager {
     /// Monotonically increasing generation token used to discard stale async fetch responses across room switches.
     private var activeRoomGeneration: UInt64 = 0
 
+    // MARK: - Realtime Domain Event Stream
+    private var realtimeContinuations: [UUID: AsyncStream<SupabaseRealtimeEvent>.Continuation] = [:]
 
+    /// Async stream of typed Realtime domain events processed and verified by RoomManager.
+    public var realtimeEvents: AsyncStream<SupabaseRealtimeEvent> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            realtimeContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.realtimeContinuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    private func broadcastRealtimeEvent(_ event: SupabaseRealtimeEvent) {
+        for continuation in realtimeContinuations.values {
+            continuation.yield(event)
+        }
+    }
+
+    /// In-memory cache of user profiles (display name & avatar) to avoid N+1 requests during Realtime member joins.
+    private var profileCache: [String: (displayName: String, avatarURL: URL?)] = [:]
 
     // MARK: - Initialization
 
@@ -207,6 +237,11 @@ public final class RoomManager {
                 guard self.activeRoomGeneration == generation && self.currentRoom?.id == roomID else { return }
 
                 self.members = newMembers
+                for member in newMembers {
+                    if !member.displayName.isEmpty && member.displayName != "Member" {
+                        self.profileCache[member.userId] = (member.displayName, member.avatarAssetURL)
+                    }
+                }
                 // Safely reconcile with existing in-memory fragments so newer Realtime events are not lost
                 self.fragments = self.mergeFragments(existing: self.fragments, incoming: newFragments)
 
@@ -263,7 +298,11 @@ public final class RoomManager {
                     accentColorHex: accentColorHex
                 )
 
-                self.rooms.insert(newRoom, at: 0)
+                if let idx = self.rooms.firstIndex(where: { $0.id == newRoom.id }) {
+                    self.rooms[idx] = newRoom
+                } else {
+                    self.rooms.insert(newRoom, at: 0)
+                }
                 self.currentRoom = newRoom
                 self.lastError = nil
 
@@ -530,11 +569,19 @@ public final class RoomManager {
             ?? .cloudKit
 
         // 1. Optimistically append locally first
-        var updated = fragments
-        if !updated.contains(where: { $0.id == fragment.id }) {
-            updated.append(fragment)
-            self.fragments = CloudKitRoomRepository.sortDeterministically(updated)
-            try? await localRepository.saveFragments(self.fragments, roomID: fragment.roomId)
+        if currentRoom?.id == fragment.roomId {
+            var updated = fragments
+            if !updated.contains(where: { $0.id == fragment.id }) {
+                updated.append(fragment)
+                self.fragments = CloudKitRoomRepository.sortDeterministically(updated)
+                try? await localRepository.saveFragments(self.fragments, roomID: fragment.roomId)
+            }
+        } else {
+            var cached = (try? await localRepository.loadFragments(roomID: fragment.roomId)) ?? []
+            if !cached.contains(where: { $0.id == fragment.id }) {
+                cached.append(fragment)
+                try? await localRepository.saveFragments(cached, roomID: fragment.roomId)
+            }
         }
 
         // 2. Sync to appropriate backend
@@ -544,8 +591,14 @@ public final class RoomManager {
                 self.lastError = nil
             } catch {
                 // Rollback optimistic append on Supabase failure
-                self.fragments.removeAll { $0.id == fragment.id }
-                try? await localRepository.saveFragments(self.fragments, roomID: fragment.roomId)
+                if currentRoom?.id == fragment.roomId {
+                    self.fragments.removeAll { $0.id == fragment.id }
+                    try? await localRepository.saveFragments(self.fragments, roomID: fragment.roomId)
+                } else {
+                    var cached = (try? await localRepository.loadFragments(roomID: fragment.roomId)) ?? []
+                    cached.removeAll { $0.id == fragment.id }
+                    try? await localRepository.saveFragments(cached, roomID: fragment.roomId)
+                }
                 self.lastError = error.localizedDescription
                 throw error
             }
@@ -559,6 +612,52 @@ public final class RoomManager {
                 // Retain local fragment so simulator & offline collaboration functions
             }
         }
+    }
+
+    /// Publishes an existing personal Fragment into an active collaborative Supabase Room.
+    ///
+    /// Validates authentication, room eligibility, local media accessibility, converts the fragment
+    /// to an independent collaborative copy with a new ID, and publishes to Supabase.
+    /// The original personal Fragment remains completely untouched in local SwiftData storage.
+    @discardableResult
+    public func sharePersonalFragment(_ fragment: Fragment, to room: Room) async throws -> SharedFragment {
+        // 1. Authentication Check
+        guard supabaseService.isAuthenticated,
+              let authorId = userIdentityService.collaborativeUserID,
+              let _ = UUID(uuidString: authorId) else {
+            throw SupabaseRoomError.notAuthenticated
+        }
+
+        // 2. Room Eligibility Check
+        guard room.backend == .supabase else {
+            throw SupabaseRoomError.validationFailure("Collaborative sharing is only supported for Supabase rooms.")
+        }
+        guard !room.isEnded else {
+            throw SupabaseRoomError.validationFailure("This room has ended and is closed to new fragments.")
+        }
+        guard !room.isArchived else {
+            throw SupabaseRoomError.validationFailure("This room is archived and cannot receive new fragments.")
+        }
+
+        // 3. Media Existence Check (for non-text fragments)
+        if fragment.type != .note {
+            guard let mediaURL = fragment.mediaURL, FileManager.default.fileExists(atPath: mediaURL.path) else {
+                throw SupabaseRoomError.validationFailure("The original media file is missing or inaccessible on this device.")
+            }
+        }
+
+        // 4. Convert to independent collaborative copy (new ID ensures personal ID != shared ID)
+        let authorName = ProfileManager.shared.effectiveName
+        let sharedFragment = fragment.toCollaborativeCopy(
+            forRoomId: room.id,
+            authorId: authorId,
+            authorName: authorName
+        )
+
+        // 5. Publish to room via existing captureSharedFragment pipeline
+        try await captureSharedFragment(sharedFragment)
+
+        return sharedFragment
     }
 
     /// Deletes a SharedFragment from the room, updating local cache first and syncing with the backend.
@@ -633,12 +732,17 @@ public final class RoomManager {
         }
     }
 
-    private func startRealtime(for roomID: String) async {
+    public func startRealtime(for roomID: String) async {
+        if realtimeTask != nil && realtimeCoordinator.activeRoomID == roomID && realtimeCoordinator.connectionState == .connected {
+            return
+        }
         realtimeTask?.cancel()
         realtimeTask = nil
 
+        print("📡 [RoomManager] Starting Realtime connection for room: \(roomID)")
         do {
             try await realtimeCoordinator.start(roomID: roomID)
+            print("🟢 [RoomManager] Realtime connected for room: \(roomID)")
 
             realtimeTask = Task { [weak self] in
                 guard let self else { return }
@@ -650,15 +754,18 @@ public final class RoomManager {
             }
         } catch {
             self.lastError = "Realtime connection failed: \(error.localizedDescription)"
+            print("❌ [RoomManager] Realtime connection failed for room \(roomID): \(error.localizedDescription)")
         }
     }
 
-    private func stopRealtime(roomID: String?) {
+    public func stopRealtime(roomID: String? = nil) {
+        let targetID = roomID ?? currentRoom?.id
+        print("🛑 [RoomManager] Teardown Realtime subscription for room: \(targetID ?? "unknown")")
         realtimeTask?.cancel()
         realtimeTask = nil
 
         Task { [weak self] in
-            await self?.realtimeCoordinator.stop(roomID: roomID)
+            await self?.realtimeCoordinator.stop(roomID: targetID)
         }
     }
 
@@ -688,8 +795,23 @@ public final class RoomManager {
             rooms.removeAll { $0.id == deletedID }
             try? await localRepository.deleteRoom(id: deletedID)
 
-        case .memberJoined(let member):
+        case .memberJoined(var member):
             guard member.roomId == roomID else { return }
+            if member.displayName == "Member" || member.displayName.isEmpty {
+                if let cached = profileCache[member.userId] {
+                    member.displayName = cached.displayName
+                    member.avatarAssetURL = cached.avatarURL
+                } else if let userUUID = UUID(uuidString: member.userId) {
+                    if let repo = supabaseRepository as? SupabaseRoomRepository {
+                        if let profile = try? await repo.fetchUserProfile(userID: userUUID) {
+                            member.displayName = profile.displayName
+                            let avatarURL: URL? = profile.avatarStoragePath.flatMap { URL(string: $0) }
+                            member.avatarAssetURL = avatarURL
+                            profileCache[member.userId] = (profile.displayName, avatarURL)
+                        }
+                    }
+                }
+            }
             if let idx = members.firstIndex(where: { $0.id == member.id || ($0.userId == member.userId && $0.roomId == member.roomId) }) {
                 members[idx] = member
             } else {
@@ -697,8 +819,23 @@ public final class RoomManager {
             }
             try? await localRepository.saveMembers(members, roomID: roomID)
 
-        case .memberChanged(let member):
+        case .memberChanged(var member):
             guard member.roomId == roomID else { return }
+            if member.displayName == "Member" || member.displayName.isEmpty {
+                if let cached = profileCache[member.userId] {
+                    member.displayName = cached.displayName
+                    member.avatarAssetURL = cached.avatarURL
+                } else if let userUUID = UUID(uuidString: member.userId) {
+                    if let repo = supabaseRepository as? SupabaseRoomRepository {
+                        if let profile = try? await repo.fetchUserProfile(userID: userUUID) {
+                            member.displayName = profile.displayName
+                            let avatarURL: URL? = profile.avatarStoragePath.flatMap { URL(string: $0) }
+                            member.avatarAssetURL = avatarURL
+                            profileCache[member.userId] = (profile.displayName, avatarURL)
+                        }
+                    }
+                }
+            }
             if let idx = members.firstIndex(where: { $0.id == member.id || ($0.userId == member.userId && $0.roomId == member.roomId) }) {
                 members[idx] = member
             } else {
@@ -756,9 +893,13 @@ public final class RoomManager {
                     fragment.mediaReference = nil
                     fragments[idx] = fragment
                     try? await localRepository.saveFragments(fragments, roomID: roomID)
+                    try? await RemoteMediaService.shared.removeMedia(for: storagePath, roomID: rID)
                 }
             }
         }
+
+        // Forward typed domain event to subscribers (e.g. MomentManager)
+        broadcastRealtimeEvent(event)
     }
 
     /// Performs an authoritative scoped refetch of fragments from the remote database to reconcile state.

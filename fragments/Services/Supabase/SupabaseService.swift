@@ -58,6 +58,11 @@ public final class SupabaseService {
         currentUser?.id.uuidString ?? session?.user.id.uuidString
     }
 
+    /// Canonical native UUID for the active Supabase user, if authenticated.
+    public var currentUserUUID: UUID? {
+        currentUser?.id ?? session?.user.id
+    }
+
     private var authObserverTask: Task<Void, Never>?
 
     // MARK: - Initialization

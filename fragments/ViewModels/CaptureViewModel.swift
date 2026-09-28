@@ -45,7 +45,17 @@ final class CaptureViewModel {
     }
 
     func checkCanCapture() -> Bool {
-        if case .room = captureContext {
+        if case .room(let room) = captureContext {
+            if room.backend == .supabase {
+                guard SupabaseService.shared.isAuthenticated,
+                      UserIdentityService.shared.collaborativeUserID != nil else {
+                    limitAlertTitle = "Sign In Required"
+                    limitAlertMessage = "You must be signed in with your Supabase account to capture fragments in this collaborative room."
+                    showLimitAlert = true
+                    UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                    return false
+                }
+            }
             // Collaborative rooms do not apply personal standalone 15-fragment limits
             return true
         }
@@ -71,17 +81,34 @@ final class CaptureViewModel {
         return true
     }
 
+    private func resolveCollaborativeAuthor(for room: Room) -> (authorId: String, authorName: String)? {
+        if room.backend == .supabase {
+            guard let supabaseUUID = UserIdentityService.shared.collaborativeUserID else {
+                limitAlertTitle = "Sign In Required"
+                limitAlertMessage = "You must be signed in with your Supabase account to capture fragments in this collaborative room."
+                showLimitAlert = true
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                return nil
+            }
+            return (authorId: supabaseUUID, authorName: ProfileManager.shared.signature)
+        } else {
+            let legacyId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+            return (authorId: legacyId, authorName: ProfileManager.shared.signature)
+        }
+    }
+
     func handlePhotoCapture(image: UIImage?, fileURL: URL?) {
         guard checkCanCapture() else { return }
         let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
 
         if case .room(let room) = captureContext {
+            guard let author = resolveCollaborativeAuthor(for: room) else { return }
             let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
             let sharedFrag = SharedFragment(
                 id: UUID().uuidString,
                 roomId: room.id,
-                authorId: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user",
-                authorName: ProfileManager.shared.signature,
+                authorId: author.authorId,
+                authorName: author.authorName,
                 type: .photo,
                 createdAt: Date(),
                 title: "\(room.name) Photo",
@@ -141,12 +168,13 @@ final class CaptureViewModel {
         }
 
         if case .room(let room) = captureContext {
+            guard let author = resolveCollaborativeAuthor(for: room) else { return }
             let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
             let sharedFrag = SharedFragment(
                 id: UUID().uuidString,
                 roomId: room.id,
-                authorId: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user",
-                authorName: ProfileManager.shared.signature,
+                authorId: author.authorId,
+                authorName: author.authorName,
                 type: .video,
                 createdAt: Date(),
                 title: "\(room.name) Video",
@@ -193,13 +221,14 @@ final class CaptureViewModel {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if case .room(let room) = captureContext {
+            guard let author = resolveCollaborativeAuthor(for: room) else { return }
             let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
             let finalTitle = trimmedTitle.isEmpty ? "\(room.name) Note" : trimmedTitle
             let sharedFrag = SharedFragment(
                 id: UUID().uuidString,
                 roomId: room.id,
-                authorId: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user",
-                authorName: ProfileManager.shared.signature,
+                authorId: author.authorId,
+                authorName: author.authorName,
                 type: .note,
                 createdAt: Date(),
                 title: finalTitle,
@@ -252,13 +281,14 @@ final class CaptureViewModel {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if case .room(let room) = captureContext {
+            guard let author = resolveCollaborativeAuthor(for: room) else { return }
             let coords = Fragment.generateScatteredCoordinates(existing: activeSession?.fragments ?? [])
             let finalTitle = trimmedTitle.isEmpty ? "\(room.name) Voice Memo" : trimmedTitle
             let sharedFrag = SharedFragment(
                 id: UUID().uuidString,
                 roomId: room.id,
-                authorId: UserIdentityService.shared.currentUserIdentity?.id ?? "local_user",
-                authorName: ProfileManager.shared.signature,
+                authorId: author.authorId,
+                authorName: author.authorName,
                 type: .audio,
                 createdAt: Date(),
                 title: finalTitle,

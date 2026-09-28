@@ -51,8 +51,37 @@ public final class UserIdentityService {
 
     // MARK: - State Properties
 
-    /// The currently resolved user identity for this device.
+    /// The currently resolved user identity for this device (CloudKit / local offline fallback).
     public private(set) var currentUserIdentity: UserIdentity?
+
+    // MARK: - Collaborative Identity (Supabase Canonical)
+
+    /// Canonical collaborative user UUID string if authenticated with Supabase.
+    public var collaborativeUserID: String? {
+        SupabaseService.shared.currentUserID
+    }
+
+    /// Canonical collaborative user UUID if authenticated with Supabase.
+    public var collaborativeUserUUID: UUID? {
+        SupabaseService.shared.currentUserUUID
+    }
+
+    /// Resolves the canonical collaborative user identity.
+    ///
+    /// When authenticated with Supabase, returns a UserIdentity whose `id` is the
+    /// canonical Supabase Auth user UUID string, and whose display name reflects ProfileManager.
+    /// If signed out of Supabase, returns nil so collaborative writes do NOT use fake device IDs.
+    public var collaborativeIdentity: UserIdentity? {
+        guard let supabaseID = collaborativeUserID else {
+            return nil
+        }
+        return UserIdentity(
+            id: supabaseID,
+            displayName: ProfileManager.shared.effectiveName,
+            isCurrentUser: true,
+            lastResolvedAt: Date()
+        )
+    }
 
     /// Indicates whether identity resolution is currently active.
     public private(set) var isResolving: Bool = false

@@ -12,6 +12,7 @@ public struct RoomsListView: View {
     @State private var roomManager = RoomManager.shared
     @State private var selectedRoom: Room? = nil
     @State private var showCreateSheet: Bool = false
+    @State private var showJoinSheet: Bool = false
 
     public init() {}
 
@@ -33,10 +34,12 @@ public struct RoomsListView: View {
                     .padding(.bottom, 40)
                 }
                 .refreshable {
-                    await roomManager.refreshFromCloudKit()
+                    await roomManager.refreshAllRooms()
                 }
             }
         }
+        .navigationTitle("Rooms")
+        .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $selectedRoom) { room in
             RoomDetailView(room: room)
         }
@@ -46,8 +49,23 @@ public struct RoomsListView: View {
                 selectedRoom = newRoom
             }
         }
+        .sheet(isPresented: $showJoinSheet) {
+            JoinRoomSheet { joinedRoom in
+                selectedRoom = joinedRoom
+            }
+        }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showJoinSheet = true
+                } label: {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+                .accessibilityLabel("Join Room with Code")
+
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     showCreateSheet = true
@@ -56,10 +74,11 @@ public struct RoomsListView: View {
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(.primary)
                 }
+                .accessibilityLabel("Create New Room")
             }
         }
         .task {
-            await roomManager.refreshFromCloudKit()
+            await roomManager.refreshAllRooms()
         }
     }
 
@@ -90,21 +109,39 @@ public struct RoomsListView: View {
                     .padding(.horizontal, 36)
             }
 
-            Button {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                showCreateSheet = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .bold))
-                    Text("Create Room")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+            HStack(spacing: 12) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    showJoinSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "link")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Join Room")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 13)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 13)
-                .background(Color.purple, in: Capsule())
-                .shadow(color: Color.purple.opacity(0.35), radius: 8, y: 3)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    showCreateSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Create Room")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 13)
+                    .background(Color.purple, in: Capsule())
+                    .shadow(color: Color.purple.opacity(0.35), radius: 8, y: 3)
+                }
             }
             .padding(.top, 8)
 

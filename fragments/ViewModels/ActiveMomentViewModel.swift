@@ -103,8 +103,12 @@ final class ActiveMomentViewModel {
 
     func startSyncObserver() {
         guard let session = session, session.isShared, let room = session.room else { return }
-        // Ensure central background synchronization engine in MomentManager is active
-        momentManager.startRemoteSyncObserver(roomID: room.id)
+        // Ensure central background synchronization engine in MomentManager is active for appropriate backend
+        if room.backend == .supabase {
+            momentManager.startSupabaseRealtimeObserver(roomID: room.id)
+        } else {
+            momentManager.startRemoteSyncObserver(roomID: room.id)
+        }
     }
 
     func stopSyncObserver() {

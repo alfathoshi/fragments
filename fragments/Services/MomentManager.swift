@@ -41,6 +41,12 @@ final class MomentManager {
     /// When true, prevents any auto-save (Multipeer or CloudKit relay) from persisting the moment.
     private(set) var hasLeftSession: Bool = false
 
+    /// Active background task observing Supabase Realtime domain events from RoomManager.
+    private var supabaseRealtimeTask: Task<Void, Never>? = nil
+
+    /// In-flight media metadata received before the corresponding fragment row arrived via Realtime.
+    private var pendingRemoteMedia: [String: (media: SharedMediaReference, roomID: String)] = [:]
+
     private var modelContext: ModelContext?
     /// Reference to the currently running Live Activity (nil when no session is active).
     private var liveActivity: Activity<MomentActivityAttributes>?
@@ -48,6 +54,15 @@ final class MomentManager {
     var isSessionActive: Bool {
         activeSession != nil
     }
+
+    #if DEBUG
+    var isRemoteSyncTaskActive: Bool {
+        remoteSyncTask != nil
+    }
+    var isSupabaseRealtimeTaskActive: Bool {
+        supabaseRealtimeTask != nil
+    }
+    #endif
 
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
@@ -137,7 +152,12 @@ final class MomentManager {
             )
             activeSession = restored
             if restored.isShared, let room = restored.room {
-                startRemoteSyncObserver(roomID: room.id)
+                if room.backend == .supabase {
+                    RoomManager.shared.currentRoom = room
+                    startSupabaseRealtimeObserver(roomID: room.id)
+                } else {
+                    startRemoteSyncObserver(roomID: room.id)
+                }
             }
         }
     }
@@ -401,27 +421,52 @@ final class MomentManager {
         )
         MultipeerSyncService.shared.start(roomID: roomId, localMember: hostMember, isHost: true, sessionStartDate: sessionStartDate)
 
-        // 3. Asynchronously provision the Room in Supabase (or CloudKit fallback) in background
-        Task {
-            if let provisionedRoom = try? await RoomManager.shared.createRoom(
-                id: roomId,
-                name: roomName,
-                emoji: "✨",
-                createdAt: sessionStartDate,
-                backend: SupabaseService.shared.isAuthenticated ? .supabase : .cloudKit
-            ) {
-                await MainActor.run {
-                    if var current = self.activeSession, current.isShared, current.room?.id == roomId {
-                        current.room = provisionedRoom
-                        self.activeSession = current
-                        self.persistSession(current)
+        // 3. Setup remote sync: Supabase Realtime vs Legacy CloudKit
+        if optimisticRoom.backend == .supabase {
+            RoomManager.shared.currentRoom = optimisticRoom
+            startSupabaseRealtimeObserver(roomID: roomId)
+
+            // Asynchronously provision the Room in Supabase in background
+            Task {
+                if let provisionedRoom = try? await RoomManager.shared.createRoom(
+                    id: roomId,
+                    name: roomName,
+                    emoji: "✨",
+                    createdAt: sessionStartDate,
+                    backend: .supabase
+                ) {
+                    await MainActor.run {
+                        if var current = self.activeSession, current.isShared, current.room?.id == roomId {
+                            current.room = provisionedRoom
+                            self.activeSession = current
+                            self.persistSession(current)
+                        }
                     }
                 }
             }
-        }
+        } else {
+            // Legacy CloudKit path
+            Task {
+                if let provisionedRoom = try? await RoomManager.shared.createRoom(
+                    id: roomId,
+                    name: roomName,
+                    emoji: "✨",
+                    createdAt: sessionStartDate,
+                    backend: .cloudKit
+                ) {
+                    await MainActor.run {
+                        if var current = self.activeSession, current.isShared, current.room?.id == roomId {
+                            current.room = provisionedRoom
+                            self.activeSession = current
+                            self.persistSession(current)
+                        }
+                    }
+                }
+            }
 
-        // 4. Start continuous remote live sync across internet / different networks
-        startRemoteSyncObserver(roomID: roomId)
+            // Start continuous remote live sync across internet / different networks
+            startRemoteSyncObserver(roomID: roomId)
+        }
     }
 
     /// Joins an existing collaborative Shared Moment session in progress
@@ -456,32 +501,62 @@ final class MomentManager {
         )
         MultipeerSyncService.shared.start(roomID: room.id, localMember: member, isHost: false, sessionStartDate: room.createdAt)
 
-        // 2. Start continuous remote live sync across internet / different networks
-        startRemoteSyncObserver(roomID: room.id)
+        if room.backend == .supabase {
+            // 2. Supabase Realtime path: set currentRoom and observe typed Realtime domain events
+            RoomManager.shared.currentRoom = room
+            startSupabaseRealtimeObserver(roomID: room.id)
 
-        // Asynchronously pull remote fragments from CloudKit in background
-        Task {
-            if let liveFragments = try? await CloudKitRoomRepository.shared.fetchFragments(roomID: room.id) {
-                let domainFragments = liveFragments.map { $0.toFragment() }
+            // Reconcile preexisting fragments from RoomManager / Supabase
+            Task {
+                await RoomManager.shared.loadRoomDetails(roomID: room.id)
                 await MainActor.run {
-                    if var current = self.activeSession, current.isShared, current.room?.id == room.id {
-                        var combined = current.fragments
-                        for frag in domainFragments {
-                            if !combined.contains(where: { $0.id == frag.id }) {
-                                combined.append(frag)
-                            }
+                    guard var current = self.activeSession, current.isShared, current.room?.id == room.id else { return }
+                    let rmFragments = RoomManager.shared.fragments.map { $0.toFragment() }
+                    var updated = current.fragments
+                    var hasNew = false
+                    for frag in rmFragments {
+                        if !updated.contains(where: { $0.id == frag.id }) {
+                            updated.append(frag)
+                            hasNew = true
                         }
-                        current.fragments = combined
+                    }
+                    if hasNew {
+                        current.fragments = updated
                         self.activeSession = current
                         self.persistSession(current)
+                        self.updateLiveActivity(session: current)
+                        print("📥 [MomentManager] Reconciled \(rmFragments.count) fragments from Supabase into active session")
                     }
                 }
             }
-        }
+        } else {
+            // 2. Legacy CloudKit path: continuous polling and record fetching
+            startRemoteSyncObserver(roomID: room.id)
 
-        // Register current user as a participant member in CloudKit
-        Task {
-            try? await CloudKitRoomRepository.shared.saveMember(member)
+            // Asynchronously pull remote fragments from CloudKit in background
+            Task {
+                if let liveFragments = try? await CloudKitRoomRepository.shared.fetchFragments(roomID: room.id) {
+                    let domainFragments = liveFragments.map { $0.toFragment() }
+                    await MainActor.run {
+                        if var current = self.activeSession, current.isShared, current.room?.id == room.id {
+                            var combined = current.fragments
+                            for frag in domainFragments {
+                                if !combined.contains(where: { $0.id == frag.id }) {
+                                    combined.append(frag)
+                                }
+                            }
+                            current.fragments = combined
+                            self.activeSession = current
+                            self.persistSession(current)
+                        }
+                    }
+                }
+            }
+
+            // Register current user as a participant member in CloudKit
+            Task {
+                try? await CloudKitRoomRepository.shared.saveMember(member)
+            }
         }
     }
 
@@ -585,11 +660,19 @@ final class MomentManager {
 
     /// Starts a continuous background sync engine that keeps active shared moments updated
     /// over the internet / cellular networks regardless of which screen or view is currently open.
+    ///
+    /// - Note: Bypasses execution when the active room uses the Supabase backend, as Supabase
+    /// Realtime provides reactive push updates and eliminates the need for CloudKit polling.
     func startRemoteSyncObserver(roomID: String) {
+        guard let current = activeSession, current.room?.backend != .supabase else {
+            print("ℹ️ [MomentManager] startRemoteSyncObserver bypassed for Supabase room: \(roomID)")
+            return
+        }
+
         stopRemoteSyncObserver()
         remoteSyncTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self = self, let current = self.activeSession, current.isShared, current.room?.id == roomID else {
+                guard let self = self, let current = self.activeSession, current.isShared, current.room?.id == roomID, current.room?.backend != .supabase else {
                     break
                 }
 
@@ -649,6 +732,309 @@ final class MomentManager {
         remoteSyncTask = nil
     }
 
+    // MARK: - Supabase Realtime Collaborative Engine
+
+    /// Starts observation of typed Supabase Realtime domain events forwarded by RoomManager.
+    func startSupabaseRealtimeObserver(roomID: String) {
+        stopSupabaseRealtimeObserver()
+
+        print("📡 [MomentManager] Starting Supabase Realtime observation for room: \(roomID)")
+        supabaseRealtimeTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await event in RoomManager.shared.realtimeEvents {
+                guard !Task.isCancelled else { break }
+                guard let current = self.activeSession, current.isShared, current.room?.id == roomID else {
+                    print("🛑 [MomentManager] Active session ended or mismatch; stopping Realtime observation for room: \(roomID)")
+                    break
+                }
+                self.handleRealtimeEvent(event, forRoomID: roomID)
+            }
+        }
+    }
+
+    /// Stops observation of Supabase Realtime events for active shared sessions.
+    func stopSupabaseRealtimeObserver() {
+        if supabaseRealtimeTask != nil {
+            print("🛑 [MomentManager] Stopping Supabase Realtime observer")
+            supabaseRealtimeTask?.cancel()
+            supabaseRealtimeTask = nil
+        }
+    }
+
+    /// Reconciles typed Realtime events from RoomManager into the active MomentSession.
+    func handleRealtimeEvent(_ event: SupabaseRealtimeEvent, forRoomID roomID: String) {
+        guard let current = activeSession, current.isShared, current.room?.id == roomID else { return }
+
+        switch event {
+        case .fragmentCreated(let sharedFrag):
+            guard sharedFrag.roomId == roomID else { return }
+            handleRealtimeFragmentCreated(sharedFrag)
+
+        case .fragmentUpdated(let sharedFrag):
+            guard sharedFrag.roomId == roomID else { return }
+            handleRealtimeFragmentUpdated(sharedFrag)
+
+        case .fragmentDeleted(let fragmentID, let rID, _):
+            guard rID == roomID else { return }
+            handleRealtimeFragmentDeleted(fragmentID: fragmentID, roomID: roomID)
+
+        case .fragmentMediaCreated(let media, let fragmentID, let rID):
+            guard rID == roomID else { return }
+            handleRealtimeMediaCreated(media: media, fragmentID: fragmentID, roomID: roomID)
+
+        case .fragmentMediaDeleted(let storagePath, let fragmentID, let rID):
+            guard rID == roomID else { return }
+            handleRealtimeMediaDeleted(storagePath: storagePath, fragmentID: fragmentID, roomID: roomID)
+
+        case .roomChanged(let updatedRoom):
+            guard updatedRoom.id == roomID else { return }
+            handleRealtimeRoomChanged(updatedRoom)
+
+        case .roomDeleted(let deletedID):
+            guard deletedID == roomID else { return }
+            handleRealtimeRoomDeleted(roomID: deletedID)
+
+        case .memberJoined(let member):
+            guard member.roomId == roomID else { return }
+            handleRealtimeMemberJoined(member)
+
+        case .memberChanged(let member):
+            guard member.roomId == roomID else { return }
+            handleRealtimeMemberChanged(member)
+
+        case .memberLeft(let memberID, let rID, let userID):
+            guard rID == roomID else { return }
+            handleRealtimeMemberLeft(memberID: memberID, userID: userID)
+        }
+    }
+
+    private func attachLocalMedia(localURL: URL, fragmentID: String, roomID: String) {
+        guard var current = activeSession, current.isShared else { return }
+        guard let targetUUID = UUID(uuidString: fragmentID) else { return }
+
+        guard let idx = current.fragments.firstIndex(where: { $0.id == targetUUID }) else {
+            return
+        }
+
+        print("🖼️ [MomentManager] Attaching local media path: \(localURL.path) to fragment: \(fragmentID)")
+        current.fragments[idx].mediaResourceName = localURL.path
+        self.activeSession = current
+        self.persistSession(current)
+    }
+
+    private func handleRealtimeFragmentCreated(_ sharedFrag: SharedFragment) {
+        guard var current = activeSession, current.isShared else { return }
+        guard let targetUUID = UUID(uuidString: sharedFrag.id) else { return }
+
+        var domainFrag = sharedFrag.toFragment()
+
+        // Check if media was received or cached in advance
+        if domainFrag.mediaResourceName == nil {
+            if let pending = pendingRemoteMedia[sharedFrag.id] {
+                if let cached = RemoteMediaService.shared.cachedMediaURL(for: pending.media, roomID: pending.roomID) {
+                    domainFrag.mediaResourceName = cached.path
+                } else {
+                    Task { [weak self] in
+                        do {
+                            let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: pending.media, roomID: pending.roomID)
+                            await MainActor.run {
+                                self?.attachLocalMedia(localURL: downloadedURL, fragmentID: sharedFrag.id, roomID: pending.roomID)
+                            }
+                        } catch {
+                            print("⚠️ [MomentManager] Failed to download pending media for fragment \(sharedFrag.id): \(error)")
+                        }
+                    }
+                }
+            } else if let mediaRef = sharedFrag.mediaReference {
+                if let cached = RemoteMediaService.shared.cachedMediaURL(for: mediaRef, roomID: sharedFrag.roomId) {
+                    domainFrag.mediaResourceName = cached.path
+                } else {
+                    Task { [weak self] in
+                        do {
+                            let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: mediaRef, roomID: sharedFrag.roomId)
+                            await MainActor.run {
+                                self?.attachLocalMedia(localURL: downloadedURL, fragmentID: sharedFrag.id, roomID: sharedFrag.roomId)
+                            }
+                        } catch {
+                            print("⚠️ [MomentManager] Failed to download media for fragment \(sharedFrag.id): \(error)")
+                        }
+                    }
+                }
+            }
+        }
+
+        if let existingIdx = current.fragments.firstIndex(where: { $0.id == targetUUID }) {
+            // Deduplicate & reconcile optimistic state
+            print("🔄 [MomentManager] Reconciled optimistic fragment: \(sharedFrag.id) in room: \(sharedFrag.roomId)")
+            var existing = current.fragments[existingIdx]
+            existing.title = domainFrag.title
+            if domainFrag.subtitle != nil { existing.subtitle = domainFrag.subtitle }
+            if domainFrag.text != nil { existing.text = domainFrag.text }
+            if domainFrag.location != nil { existing.location = domainFrag.location }
+            if domainFrag.duration != nil { existing.duration = domainFrag.duration }
+            if !domainFrag.audioWaveform.isEmpty { existing.audioWaveform = domainFrag.audioWaveform }
+            if existing.mediaResourceName == nil && domainFrag.mediaResourceName != nil {
+                existing.mediaResourceName = domainFrag.mediaResourceName
+            }
+            current.fragments[existingIdx] = existing
+        } else {
+            // Incoming remote fragment from another peer/participant
+            print("📥 [MomentManager] Realtime INSERT: Appended remote fragment: \(sharedFrag.id) (type: \(sharedFrag.type.rawValue)) in room: \(sharedFrag.roomId)")
+            current.fragments.append(domainFrag)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+
+        self.activeSession = current
+        self.persistSession(current)
+        self.updateLiveActivity(session: current)
+
+        if let room = current.room {
+            try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+        }
+    }
+
+    private func handleRealtimeFragmentUpdated(_ sharedFrag: SharedFragment) {
+        guard var current = activeSession, current.isShared else { return }
+        guard let targetUUID = UUID(uuidString: sharedFrag.id) else { return }
+
+        let domainFrag = sharedFrag.toFragment()
+
+        if let existingIdx = current.fragments.firstIndex(where: { $0.id == targetUUID }) {
+            print("✏️ [MomentManager] Realtime UPDATE: Updated existing fragment: \(sharedFrag.id) in room: \(sharedFrag.roomId)")
+            var existing = current.fragments[existingIdx]
+            existing.title = domainFrag.title
+            existing.subtitle = domainFrag.subtitle
+            existing.text = domainFrag.text
+            existing.location = domainFrag.location
+            existing.duration = domainFrag.duration
+            if !domainFrag.audioWaveform.isEmpty { existing.audioWaveform = domainFrag.audioWaveform }
+            existing.phi = domainFrag.phi
+            existing.theta = domainFrag.theta
+            existing.radiusFactor = domainFrag.radiusFactor
+            existing.gradientColors = domainFrag.gradientColors
+            if existing.mediaResourceName == nil && domainFrag.mediaResourceName != nil {
+                existing.mediaResourceName = domainFrag.mediaResourceName
+            }
+            current.fragments[existingIdx] = existing
+        } else {
+            print("📥 [MomentManager] Realtime UPDATE: Inserted missing fragment: \(sharedFrag.id) in room: \(sharedFrag.roomId)")
+            current.fragments.append(domainFrag)
+        }
+
+        self.activeSession = current
+        self.persistSession(current)
+        self.updateLiveActivity(session: current)
+
+        if let room = current.room {
+            try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+        }
+    }
+
+    private func handleRealtimeFragmentDeleted(fragmentID: String, roomID: String) {
+        guard var current = activeSession, current.isShared else { return }
+        guard let targetUUID = UUID(uuidString: fragmentID) else { return }
+
+        pendingRemoteMedia.removeValue(forKey: fragmentID)
+
+        let initialCount = current.fragments.count
+        current.fragments.removeAll(where: { $0.id == targetUUID })
+
+        if current.fragments.count < initialCount {
+            print("🗑️ [MomentManager] Realtime DELETE: Removed fragment: \(fragmentID) from room: \(roomID)")
+            self.activeSession = current
+            self.persistSession(current)
+            self.updateLiveActivity(session: current)
+
+            if let room = current.room {
+                try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+            }
+        }
+    }
+
+    private func handleRealtimeMediaCreated(media: SharedMediaReference, fragmentID: String, roomID: String) {
+        pendingRemoteMedia[fragmentID] = (media, roomID)
+
+        if let local = media.localFileURL {
+            attachLocalMedia(localURL: local, fragmentID: fragmentID, roomID: roomID)
+            return
+        }
+
+        if let cached = RemoteMediaService.shared.cachedMediaURL(for: media, roomID: roomID) {
+            attachLocalMedia(localURL: cached, fragmentID: fragmentID, roomID: roomID)
+            return
+        }
+
+        Task { [weak self] in
+            do {
+                let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: media, roomID: roomID)
+                await MainActor.run {
+                    self?.attachLocalMedia(localURL: downloadedURL, fragmentID: fragmentID, roomID: roomID)
+                }
+            } catch {
+                print("⚠️ [MomentManager] Failed to download realtime media for fragment \(fragmentID): \(error)")
+            }
+        }
+    }
+
+    private func handleRealtimeMediaDeleted(storagePath: String, fragmentID: String, roomID: String) {
+        guard var current = activeSession, current.isShared else { return }
+        guard let targetUUID = UUID(uuidString: fragmentID) else { return }
+
+        if let idx = current.fragments.firstIndex(where: { $0.id == targetUUID }) {
+            if current.fragments[idx].mediaResourceName == storagePath {
+                current.fragments[idx].mediaResourceName = nil
+                self.activeSession = current
+                self.persistSession(current)
+            }
+        }
+    }
+
+    private func handleRealtimeRoomChanged(_ updatedRoom: Room) {
+        guard var current = activeSession, current.isShared, current.room?.id == updatedRoom.id else { return }
+
+        print("🏠 [MomentManager] Room metadata updated via Realtime for room: \(updatedRoom.id)")
+
+        if (updatedRoom.isArchived || updatedRoom.isEnded) && !current.isHost && !hasLeftSession {
+            print("🏁 [MomentManager] Room was archived/ended remotely by host. Finalizing session as member.")
+            let title = updatedRoom.finalTitle ?? updatedRoom.name
+            let category = updatedRoom.finalCategory ?? "Life"
+            finishSessionAsMember(finalTitle: title, category: category)
+            return
+        }
+
+        current.room = updatedRoom
+        self.activeSession = current
+        self.persistSession(current)
+    }
+
+    private func handleRealtimeRoomDeleted(roomID: String) {
+        guard let current = activeSession, current.isShared, current.room?.id == roomID else { return }
+        print("🚨 [MomentManager] Room was deleted remotely: \(roomID). Leaving active session.")
+        if !hasLeftSession {
+            leaveSession()
+        }
+    }
+
+    private func handleRealtimeMemberJoined(_ member: RoomMember) {
+        guard var current = activeSession, current.isShared, var r = current.room else { return }
+        r.memberCount = RoomManager.shared.members.count
+        current.room = r
+        self.activeSession = current
+        self.persistSession(current)
+    }
+
+    private func handleRealtimeMemberChanged(_ member: RoomMember) {
+        // Preserved for Identity phase
+    }
+
+    private func handleRealtimeMemberLeft(memberID: String, userID: String) {
+        guard var current = activeSession, current.isShared, var r = current.room else { return }
+        r.memberCount = RoomManager.shared.members.count
+        current.room = r
+        self.activeSession = current
+        self.persistSession(current)
+    }
+
     /// Prompts the End Moment sheet to name & categorize the session
     func requestEndSession() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -701,13 +1087,18 @@ final class MomentManager {
             room.name = finalTitle
             room.accentColorHex = color?.toRGBAString()
             room.fragmentCount = session.fragments.count
+            room.isEnded = true
+            room.finalTitle = finalTitle
+            room.finalCategory = category
 
             // 1. Broadcast sessionEnded via local Multipeer
             MultipeerSyncService.shared.broadcastSessionEnded(finalTitle: finalTitle, finalCategory: category)
 
             // 2. Mark in Public Cloud Relay and update room
             Task {
-                await CloudKitRoomRepository.shared.markRoomEndedPublicRelay(roomID: room.id, finalTitle: finalTitle)
+                if room.backend != .supabase {
+                    await CloudKitRoomRepository.shared.markRoomEndedPublicRelay(roomID: room.id, finalTitle: finalTitle)
+                }
                 try? await RoomManager.shared.updateRoom(room)
             }
         }
@@ -716,6 +1107,13 @@ final class MomentManager {
         clearPersistedSession()
         endLiveActivity()
         stopRemoteSyncObserver()
+        stopSupabaseRealtimeObserver()
+        if session.isShared, let room = session.room, room.backend == .supabase {
+            RoomManager.shared.stopRealtime(roomID: room.id)
+            if RoomManager.shared.currentRoom?.id == room.id {
+                RoomManager.shared.currentRoom = nil
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             MultipeerSyncService.shared.stop()
         }
@@ -741,6 +1139,7 @@ final class MomentManager {
         clearPersistedSession()
         endLiveActivity()
         stopRemoteSyncObserver()
+        stopSupabaseRealtimeObserver()
         MultipeerSyncService.shared.stop()
 
         // 1. Remove from local collections if it was ever added
@@ -816,6 +1215,13 @@ final class MomentManager {
         clearPersistedSession()
         endLiveActivity()
         stopRemoteSyncObserver()
+        stopSupabaseRealtimeObserver()
+        if session.isShared, let room = session.room, room.backend == .supabase {
+            RoomManager.shared.stopRealtime(roomID: room.id)
+            if RoomManager.shared.currentRoom?.id == room.id {
+                RoomManager.shared.currentRoom = nil
+            }
+        }
         MultipeerSyncService.shared.stop()
         return newCollection
     }
@@ -831,9 +1237,16 @@ final class MomentManager {
         clearPersistedSession()
         endLiveActivity()
         stopRemoteSyncObserver()
+        stopSupabaseRealtimeObserver()
         MultipeerSyncService.shared.stop()
 
         if let session = sessionToCancel, session.isShared, let room = session.room {
+            if room.backend == .supabase {
+                RoomManager.shared.stopRealtime(roomID: room.id)
+                if RoomManager.shared.currentRoom?.id == room.id {
+                    RoomManager.shared.currentRoom = nil
+                }
+            }
             if room.isCurrentUserOwner {
                 Task {
                     try? await RoomManager.shared.deleteRoom(id: room.id)
