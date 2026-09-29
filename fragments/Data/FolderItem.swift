@@ -21,6 +21,9 @@ public struct FolderItem: Identifiable, Hashable {
     public var audioWaveform: [CGFloat]?
     public var type: FragmentType?
     public var createdAt: Date?
+    public var phi: Double?
+    public var theta: Double?
+    public var radiusFactor: Double?
     
     public init(
         id: UUID = UUID(),
@@ -34,7 +37,10 @@ public struct FolderItem: Identifiable, Hashable {
         duration: String? = nil,
         audioWaveform: [CGFloat]? = nil,
         type: FragmentType? = nil,
-        createdAt: Date? = nil
+        createdAt: Date? = nil,
+        phi: Double? = nil,
+        theta: Double? = nil,
+        radiusFactor: Double? = nil
     ) {
         self.id = id
         self.title = title
@@ -48,6 +54,9 @@ public struct FolderItem: Identifiable, Hashable {
         self.audioWaveform = audioWaveform
         self.type = type
         self.createdAt = createdAt
+        self.phi = phi
+        self.theta = theta
+        self.radiusFactor = radiusFactor
     }
     
     public init(from fragment: Fragment) {
@@ -80,7 +89,10 @@ public struct FolderItem: Identifiable, Hashable {
             duration: fragment.duration,
             audioWaveform: fragment.audioWaveform,
             type: fragment.type,
-            createdAt: fragment.createdAt
+            createdAt: fragment.createdAt,
+            phi: fragment.phi,
+            theta: fragment.theta,
+            radiusFactor: fragment.radiusFactor
         )
     }
     
@@ -116,7 +128,10 @@ public struct FolderItem: Identifiable, Hashable {
             mediaResourceName: imageName,
             gradientColors: gradientColors.isEmpty ? [Color.blue, Color.purple] : gradientColors,
             duration: duration,
-            audioWaveform: audioWaveform ?? []
+            audioWaveform: audioWaveform ?? [],
+            phi: phi,
+            theta: theta,
+            radiusFactor: radiusFactor
         )
     }
     
@@ -219,5 +234,22 @@ public enum MomentCategory: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 
     public static let allCategoryNames: [String] = MomentCategory.allCases.map { $0.rawValue }
+}
+
+// MARK: - Array Extension for 3D Spatial Distribution
+extension Array where Element == FolderItem {
+    /// Converts array of FolderItems to Fragments with properly scattered 3D spherical coordinates
+    public func toFragments() -> [Fragment] {
+        self.enumerated().map { index, item in
+            var frag = item.toFragment()
+            if item.phi == nil || item.theta == nil {
+                let coords = FragmentSphere.fibonacciCoordinates(count: self.count, index: index)
+                frag.phi = coords.phi
+                frag.theta = coords.theta
+                frag.radiusFactor = coords.radiusFactor
+            }
+            return frag
+        }
+    }
 }
 

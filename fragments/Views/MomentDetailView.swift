@@ -8,6 +8,14 @@
 import SwiftUI
 import AVFoundation
 
+// MARK: - Moment Detail View Mode
+public enum MomentDetailViewMode: String, CaseIterable, Identifiable {
+    case grid
+    case sphere
+
+    public var id: String { rawValue }
+}
+
 // MARK: - Moment Detail View
 public struct MomentDetailView: View {
     public let collection: FolderCollection
@@ -17,6 +25,13 @@ public struct MomentDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var viewModel: MomentDetailViewModel
+    @State private var viewMode: MomentDetailViewMode = .grid
+    @State private var selectedFragment: Fragment? = nil
+    @State private var sphereRotation: Double = 0.0
+    @State private var sphereTilt: Double = 0.0
+    @State private var shareImage: UIImage? = nil
+    @State private var showShareSheet: Bool = false
+    @State private var showScreenshotFlash: Bool = false
     @State private var showMembersSheet: Bool = false
 
     public init(
@@ -64,21 +79,68 @@ public struct MomentDetailView: View {
             Color(uiColor: .systemBackground)
                 .ignoresSafeArea()
 
-            // Layout Canvas with Discrete Spots
-            GeometryReader { containerGeo in
-                if viewModel.items.isEmpty {
-                    emptyStateView
-                } else {
-                    let canvasWidth = containerGeo.size.width
-                    let horizontalMargin: CGFloat = 16.0
-                    let contentWidth = max(280.0, canvasWidth - (horizontalMargin * 2.0))
+            switch viewMode {
+            case .grid:
+                // Layout Canvas with Discrete Spots
+                GeometryReader { containerGeo in
+                    if viewModel.items.isEmpty {
+                        emptyStateView
+                    } else {
+                        let canvasWidth = containerGeo.size.width
+                        let horizontalMargin: CGFloat = 16.0
+                        let contentWidth = max(280.0, canvasWidth - (horizontalMargin * 2.0))
 
-                    widgetCanvasView(
-                        contentWidth: contentWidth,
-                        horizontalMargin: horizontalMargin,
-                        canvasSize: containerGeo.size
-                    )
+                        widgetCanvasView(
+                            contentWidth: contentWidth,
+                            horizontalMargin: horizontalMargin,
+                            canvasSize: containerGeo.size
+                        )
+                    }
                 }
+                .transition(.opacity)
+
+            case .sphere:
+                ZStack {
+                    if viewModel.items.isEmpty {
+                        emptyStateView
+                    } else {
+                        FragmentSphere(
+                            fragments: viewModel.items.toFragments(),
+                            rotationAngle: $sphereRotation,
+                            tiltAngle: $sphereTilt,
+                            onSelectFragment: { fragment in
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                                    selectedFragment = fragment
+                                }
+                            }
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
+            }
+
+            // Visual feedback flash on screenshot capture
+            if showScreenshotFlash {
+                Color.white
+                    .ignoresSafeArea()
+                    .opacity(0.65)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+
+            // Fragment Detail modal inspection
+            if let fragment = selectedFragment {
+                FragmentDetailView(
+                    fragment: fragment,
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
+                            selectedFragment = nil
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(100)
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -98,7 +160,7 @@ public struct MomentDetailView: View {
             }
 
             ToolbarItem(placement: .principal) {
-                VStack(spacing: 2) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(collection.name.isEmpty ? "Moment Detail" : collection.name)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Color.primary)
@@ -121,6 +183,35 @@ public struct MomentDetailView: View {
                             .font(.system(size: 15, weight: .semibold))
                     }
                     .accessibilityLabel("Room Members")
+                }
+
+                if !viewModel.hasReordered && !viewModel.isSavedConfirmation {
+                    // Switch mode button (Grid <-> Sphere)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if viewMode == .grid {
+                            viewModel.stopAudio()
+                            viewModel.unmutedVideoID = nil
+                        }
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                            viewMode = (viewMode == .grid ? .sphere : .grid)
+                        }
+                    } label: {
+                        Image(systemName: viewMode == .grid ? "circle.hexagongrid" : "square.grid.2x2")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.primary)
+                    }
+                    .accessibilityLabel(viewMode == .grid ? "Switch to Sphere View" : "Switch to Grid View")
+
+                    // Share button: 9:16 screenshot without toolbar chrome
+                    Button {
+                        takeShareScreenshot()
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.primary)
+                    }
+                    .accessibilityLabel("Share Moment")
                 }
 
                 if viewModel.hasReordered {
@@ -155,6 +246,11 @@ public struct MomentDetailView: View {
         .sheet(isPresented: $showMembersSheet) {
             RoomMembersSheet(room: resolvedRoom)
         }
+        .sheet(isPresented: $showShareSheet) {
+            if let image = shareImage {
+                ShareSheet(activityItems: [image])
+            }
+        }
         .onAppear {
             viewModel.initializeItems()
         }
@@ -164,6 +260,60 @@ public struct MomentDetailView: View {
         .onDisappear {
             viewModel.stopAudio()
             viewModel.unmutedVideoID = nil
+        }
+    }
+
+    // MARK: - Screenshot & Share in 9:16 Mode
+    private func takeShareScreenshot() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        withAnimation(.easeOut(duration: 0.12)) {
+            showScreenshotFlash = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            withAnimation(.easeOut(duration: 0.22)) {
+                showScreenshotFlash = false
+            }
+        }
+
+        if let image = renderShareImage() {
+            self.shareImage = image
+            self.showShareSheet = true
+        }
+    }
+
+    @MainActor
+    private func renderShareImage() -> UIImage? {
+        let cardView = MomentShareCardView(
+            collection: collection,
+            items: viewModel.items,
+            viewMode: viewMode,
+            formattedDateText: formattedDateText,
+            sphereRotation: sphereRotation,
+            sphereTilt: sphereTilt
+        )
+        .environment(\.colorScheme, colorScheme)
+
+        let targetSize = CGSize(width: 360, height: 640)
+        let renderer = ImageRenderer(content: cardView)
+        renderer.proposedSize = ProposedViewSize(targetSize)
+        renderer.scale = 3.0
+
+        if let uiImage = renderer.uiImage {
+            return uiImage
+        }
+
+        // Fallback using UIHostingController
+        let hostingController = UIHostingController(rootView: cardView)
+        guard let hostingView = hostingController.view else { return nil }
+        hostingView.bounds = CGRect(origin: .zero, size: targetSize)
+        hostingView.backgroundColor = .clear
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3.0
+        let uigraphicsRenderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return uigraphicsRenderer.image { _ in
+            hostingView.drawHierarchy(in: CGRect(origin: .zero, size: targetSize), afterScreenUpdates: true)
         }
     }
 
@@ -312,7 +462,7 @@ public struct MomentDetailView: View {
     // MARK: - 1. Photo Widget
     private func photoWidget(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            photoBackground(item: item, width: width, height: height)
+            Self.photoBackground(item: item, width: width, height: height)
 
             // Top gradient scrim for metadata legibility
             LinearGradient(
@@ -347,7 +497,7 @@ public struct MomentDetailView: View {
     }
 
     @ViewBuilder
-    private func photoBackground(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
+    public static func photoBackground(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
         let fragment = item.toFragment()
         if let imgName = item.imageName, let uiImage = UIImage(named: imgName) {
             Image(uiImage: uiImage)
@@ -556,7 +706,7 @@ public struct MomentDetailView: View {
 
         return ZStack(alignment: .topLeading) {
             // Base poster / thumbnail preview (guarantees a frame is always visible)
-            photoBackground(item: item, width: width, height: height)
+            Self.photoBackground(item: item, width: width, height: height)
 
             // Looping video player overlaid on top when playable
             if canPlayVideo, let url = videoURL {
@@ -876,6 +1026,375 @@ private extension Color {
         UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a)
         let luminance = 0.299 * r + 0.587 * g + 0.114 * b
         return luminance > 0.68
+    }
+}
+
+// MARK: - 9:16 Share Card View (Clean Screenshot Export)
+public struct MomentShareCardView: View {
+    public let collection: FolderCollection
+    public let items: [FolderItem]
+    public let viewMode: MomentDetailViewMode
+    public let formattedDateText: String
+    public var sphereRotation: Double = 0.0
+    public var sphereTilt: Double = 0.0
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    public var body: some View {
+        ZStack {
+            Color(uiColor: .systemBackground)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Header: ONLY Title and Subtitle (Toolbar icons removed)
+                VStack(spacing: 4) {
+                    Text(collection.name.isEmpty ? "Moment Detail" : collection.name)
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+
+                    Text("\(items.count) \(items.count == 1 ? "fragment" : "fragments") | \(formattedDateText)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.top, 36)
+                .padding(.horizontal, 24)
+
+                Spacer(minLength: 12)
+
+                // Main Content
+                Group {
+                    if items.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "square.dashed")
+                                .font(.system(size: 40, weight: .light))
+                                .foregroundStyle(Color.secondary.opacity(0.6))
+                            Text("No fragments yet")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.primary)
+                        }
+                    } else {
+                        switch viewMode {
+                        case .sphere:
+                            FragmentSphere(
+                                fragments: items.toFragments(),
+                                rotationAngle: .constant(sphereRotation),
+                                tiltAngle: .constant(sphereTilt),
+                                isInteractive: false
+                            )
+                            .frame(width: 360, height: 490)
+
+                        case .grid:
+                            gridShareContent
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Spacer(minLength: 12)
+            }
+        }
+        .frame(width: 360, height: 640)
+        .clipped()
+    }
+
+    private var gridShareContent: some View {
+        let gutter: CGFloat = 12.0
+        let cardWidth: CGFloat = 154.0
+        let cardHeight: CGFloat = 168.0
+        let totalRows = (items.count + 1) / 2
+        let naturalGridHeight = CGFloat(totalRows) * cardHeight + CGFloat(max(0, totalRows - 1)) * gutter
+        let availableHeight: CGFloat = 490.0
+        let scaleFactor = min(1.0, availableHeight / max(1.0, naturalGridHeight))
+
+        return VStack(spacing: gutter) {
+            ForEach(0..<totalRows, id: \.self) { row in
+                HStack(spacing: gutter) {
+                    let firstIndex = row * 2
+                    if firstIndex < items.count {
+                        shareCard(item: items[firstIndex], width: cardWidth, height: cardHeight)
+                    }
+
+                    let secondIndex = firstIndex + 1
+                    if secondIndex < items.count {
+                        shareCard(item: items[secondIndex], width: cardWidth, height: cardHeight)
+                    } else if firstIndex < items.count {
+                        Spacer()
+                            .frame(width: cardWidth, height: cardHeight)
+                    }
+                }
+            }
+        }
+        .scaleEffect(scaleFactor, anchor: .center)
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func shareCard(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
+        switch item.type ?? .photo {
+        case .photo:
+            sharePhotoWidget(item: item, width: width, height: height)
+        case .note:
+            shareNoteWidget(item: item, width: width, height: height)
+        case .audio:
+            shareAudioWidget(item: item, width: width, height: height)
+        case .video:
+            shareVideoWidget(item: item, width: width, height: height)
+        }
+    }
+
+    private func sharePhotoWidget(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            MomentDetailView.photoBackground(item: item, width: width, height: height)
+
+            LinearGradient(
+                colors: [Color.black.opacity(0.38), Color.clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title.isEmpty ? "Photo" : item.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
+                    .lineLimit(1)
+
+                Text(formattedSubtitle(for: item))
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    .lineLimit(1)
+            }
+            .padding(12)
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func shareNoteWidget(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
+        let noteColors = item.resolvedGradientColors
+        let isLight = noteColors.first?.isLightBackground ?? true
+
+        let primaryTextColor = isLight ? Color(red: 28/255, green: 28/255, blue: 28/255) : Color.white
+        let secondaryTextColor = isLight ? Color(red: 110/255, green: 100/255, blue: 90/255) : Color.white.opacity(0.8)
+        let dividerColor = isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.2)
+
+        return ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: noteColors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.45), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.title.isEmpty ? "Note" : item.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(primaryTextColor)
+                        .lineLimit(1)
+
+                    Text(formattedSubtitle(for: item))
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(secondaryTextColor)
+                        .lineLimit(1)
+
+                    Spacer()
+                }
+
+                Rectangle()
+                    .fill(dividerColor)
+                    .frame(height: 1)
+
+                Text(item.text ?? "")
+                    .font(.system(size: 10, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(primaryTextColor)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(6)
+
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func shareAudioWidget(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
+        let memoColors = item.resolvedGradientColors
+        let isLight = memoColors.first?.isLightBackground ?? false
+
+        let primaryTextColor = isLight ? Color.black : Color.white
+        let secondaryTextColor = isLight ? Color.black.opacity(0.65) : Color.white.opacity(0.82)
+        let unplayedWaveColor = isLight ? Color.black.opacity(0.4) : Color.white.opacity(0.6)
+        let playBtnBgColor = isLight ? Color.black : Color.white
+        let playBtnIconColor = isLight ? Color.white : (memoColors.first ?? Color.black)
+        let badgeBgColor = isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.20)
+        let badgeTextColor = isLight ? Color.black.opacity(0.75) : Color.white
+
+        return VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title.isEmpty ? "Voice Memo" : item.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(primaryTextColor)
+                    .lineLimit(1)
+
+                Text(formattedSubtitle(for: item))
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(secondaryTextColor)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            let rawBars = item.audioWaveform ?? [
+                0.2, 0.5, 0.85, 0.3, 0.3, 1.0, 0.85, 0.85, 0.85, 0.6,
+                0.6, 0.6, 1.0, 0.2, 1.0, 1.0, 1.0, 0.6, 0.6, 0.6,
+                0.6, 1.0, 0.6, 0.6, 0.3, 0.6, 0.3, 0.6, 1.0, 0.6
+            ]
+
+            HStack(spacing: 2.5) {
+                ForEach(0..<min(rawBars.count, 24), id: \.self) { i in
+                    let sampleVal = CGFloat(rawBars[i])
+                    let barHeight = max(4.0, sampleVal * 28.0)
+
+                    RoundedRectangle(cornerRadius: 1.25)
+                        .fill(unplayedWaveColor)
+                        .frame(width: 2.5, height: barHeight)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: 30, alignment: .center)
+
+            Spacer(minLength: 0)
+
+            HStack(alignment: .center) {
+                Circle()
+                    .fill(playBtnBgColor)
+                    .frame(width: 30, height: 30)
+                    .overlay(
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(playBtnIconColor)
+                            .offset(x: 1)
+                    )
+
+                Spacer()
+
+                if let dur = item.duration, !dur.isEmpty {
+                    Text(dur)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(badgeTextColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule().fill(badgeBgColor)
+                        )
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: width, height: height)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: memoColors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func shareVideoWidget(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            MomentDetailView.photoBackground(item: item, width: width, height: height)
+
+            LinearGradient(
+                colors: [Color.black.opacity(0.38), Color.clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title.isEmpty ? "Video" : item.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
+                    .lineLimit(1)
+
+                Text(formattedSubtitle(for: item))
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    .lineLimit(1)
+            }
+            .padding(12)
+
+            VStack {
+                Spacer()
+                HStack(alignment: .center) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        if let dur = item.duration, !dur.isEmpty {
+                            Text(dur)
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        }
+                    }
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.25), lineWidth: 0.5)
+                    )
+
+                    Spacer()
+                }
+                .padding(10)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func formattedSubtitle(for item: FolderItem) -> String {
+        let date = item.createdAt ?? collection.date
+        let timeString = MomentDetailViewModel.timeOnlyFormatter.string(from: date)
+        if Calendar.current.isDate(date, inSameDayAs: collection.date) {
+            return timeString
+        } else {
+            let isSameYear = Calendar.current.isDate(date, equalTo: collection.date, toGranularity: .year)
+            let dateString = isSameYear
+                ? MomentDetailViewModel.dayMonthFormatter.string(from: date)
+                : MomentDetailViewModel.dayMonthYearFormatter.string(from: date)
+            return "\(dateString), \(timeString)"
+        }
     }
 }
 

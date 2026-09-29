@@ -12,12 +12,38 @@ public struct FragmentSphere: View {
     public var onSelectFragment: ((Fragment) -> Void)? = nil
 
     // Sphere state
-    @State private var rotationAngle: Double = 0.0
-    @State private var tiltAngle: Double = 0.0
+    private var externalRotationAngle: Binding<Double>?
+    private var externalTiltAngle: Binding<Double>?
+    public var isInteractive: Bool = true
+
+    @State private var internalRotationAngle: Double = 0.0
+    @State private var internalTiltAngle: Double = 0.0
     @State private var dragVelocity: Double = 0.0
     @State private var isDragging: Bool = false
     @State private var animTimer: Timer? = nil
     @State private var time: Double = 0.0
+
+    private var rotationAngle: Double {
+        get { externalRotationAngle?.wrappedValue ?? internalRotationAngle }
+        nonmutating set {
+            if let binding = externalRotationAngle {
+                binding.wrappedValue = newValue
+            } else {
+                internalRotationAngle = newValue
+            }
+        }
+    }
+
+    private var tiltAngle: Double {
+        get { externalTiltAngle?.wrappedValue ?? internalTiltAngle }
+        nonmutating set {
+            if let binding = externalTiltAngle {
+                binding.wrappedValue = newValue
+            } else {
+                internalTiltAngle = newValue
+            }
+        }
+    }
 
     // Stardust ambient spatial particles (deterministic)
     private struct SpatialParticle: Identifiable {
@@ -44,15 +70,71 @@ public struct FragmentSphere: View {
 
     public init(
         fragments: [Fragment],
+        rotationAngle: Binding<Double>? = nil,
+        tiltAngle: Binding<Double>? = nil,
+        isInteractive: Bool = true,
         onSelectFragment: ((Fragment) -> Void)? = nil
     ) {
         self.fragments = fragments
+        self.externalRotationAngle = rotationAngle
+        self.externalTiltAngle = tiltAngle
+        self.isInteractive = isInteractive
         self.onSelectFragment = onSelectFragment
+    }
+
+    // MARK: - Spherical Fibonacci Scattering Engine
+    public static func fibonacciCoordinates(count: Int, index: Int, seed: UUID? = nil) -> (phi: Double, theta: Double, radiusFactor: Double) {
+        guard count > 1 else {
+            return (phi: 0.08, theta: 0.35, radiusFactor: 1.02)
+        }
+        let goldenRatio = (1.0 + sqrt(5.0)) / 2.0
+        let goldenAngle = 2.0 * .pi * (1.0 - 1.0 / goldenRatio) // ~2.39996323 rad (~137.51 deg)
+        
+        // Distribute latitude between -0.42 and 0.42 radians (~ -24° to +24°)
+        let fraction = Double(index) / Double(count - 1)
+        let y = 0.78 - (fraction * 1.56) // from +0.78 down to -0.78
+        let phi = asin(y) * 0.45
+        
+        // Longitude rotated by golden angle per index with offset so primary item faces forward
+        let theta = (0.35 + Double(index) * goldenAngle).truncatingRemainder(dividingBy: 2.0 * .pi)
+        let positiveTheta = theta < 0 ? theta + 2.0 * .pi : theta
+        
+        // Radius factor with subtle breathing variation
+        let rFactor = 0.98 + (Double(index % 4) * 0.025)
+        return (phi: phi, theta: positiveTheta, radiusFactor: rFactor)
     }
 
     private var deduplicatedFragments: [Fragment] {
         var seen = Set<UUID>()
-        return fragments.filter { seen.insert($0.id).inserted }
+        let unique = fragments.filter { seen.insert($0.id).inserted }
+        guard unique.count > 1 else { return unique }
+
+        // Check if fragments have stacked coordinates (e.g. default (0.08, 0.35) or collisions)
+        var hasOverlap = false
+        for i in 0..<unique.count {
+            for j in (i + 1)..<unique.count {
+                let dPhi = abs(unique[i].phi - unique[j].phi)
+                let dTheta = abs(unique[i].theta - unique[j].theta)
+                if dPhi < 0.06 && dTheta < 0.06 {
+                    hasOverlap = true
+                    break
+                }
+            }
+            if hasOverlap { break }
+        }
+
+        if hasOverlap {
+            return unique.enumerated().map { index, frag in
+                var scattered = frag
+                let coords = Self.fibonacciCoordinates(count: unique.count, index: index, seed: frag.id)
+                scattered.phi = coords.phi
+                scattered.theta = coords.theta
+                scattered.radiusFactor = coords.radiusFactor
+                return scattered
+            }
+        }
+
+        return unique
     }
 
     public var body: some View {
@@ -116,18 +198,23 @@ public struct FragmentSphere: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .center)
             .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             .contentShape(Rectangle())
+            .allowsHitTesting(isInteractive)
             .gesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { value in
+                        guard isInteractive else { return }
                         handleDragChanged(value: value, radius: radius)
                     }
                     .onEnded { value in
+                        guard isInteractive else { return }
                         handleDragEnded(value: value, radius: radius)
                     }
             )
         }
         .onAppear {
-            startPhysicsLoop()
+            if isInteractive {
+                startPhysicsLoop()
+            }
         }
         .onDisappear {
             stopPhysicsLoop()
