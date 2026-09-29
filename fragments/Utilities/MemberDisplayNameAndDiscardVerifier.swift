@@ -224,6 +224,17 @@ public enum MemberDisplayNameAndDiscardVerifier {
             "Bug2: live room without active session is not a personal Moment"
         )
 
+        // MARK: - Media hydration contract (receiver retry, P0-1 / P0-2)
+
+        assertCondition(
+            MomentManager.mediaHydrationDelays == [0.5, 1.0, 2.0],
+            "Media: hydration uses bounded backoff 0.5s/1s/2s (4 attempts total, never indefinite)"
+        )
+        assertCondition(
+            MomentManager.mediaHydrationDelays.count + 1 == 4,
+            "Media: hydration attempt budget is exactly initial + 3 retries"
+        )
+
         return (allPassed, logs)
     }
 }

@@ -315,6 +315,38 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
         }
     }
 
+    // MARK: - Fragment Media Lookup (receiver hydration)
+
+    /// Fetches the media metadata row for a single fragment, if present.
+    ///
+    /// Used by the realtime receiver path: a `shared_fragments` INSERT arrives
+    /// without the embedded `fragment_media` join, and the media row is written
+    /// seconds later by the sender — so the receiver looks it up (with retry at
+    /// the call site) instead of assuming absence. Returns nil on miss.
+    public func fetchFragmentMedia(fragmentID: String, roomID: String) async throws -> SharedMediaReference? {
+        _ = try await currentAuthenticatedUser()
+
+        guard let fragmentUUID = UUID(uuidString: fragmentID),
+              let roomUUID = UUID(uuidString: roomID) else {
+            throw SupabaseRoomError.validationFailure("Invalid Fragment or Room UUID format.")
+        }
+
+        do {
+            let rows: [DatabaseFragmentMedia] = try await client
+                .from("fragment_media")
+                .select()
+                .eq("fragment_id", value: fragmentUUID)
+                .eq("room_id", value: roomUUID)
+                .limit(1)
+                .execute()
+                .value
+
+            return rows.first?.toMediaReference()
+        } catch {
+            throw mapError(error)
+        }
+    }
+
     // MARK: - Fragment Reads
 
     public func fetchFragments(roomID: String) async throws -> [SharedFragment] {
@@ -429,26 +461,72 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
     }
 
     /// High-level orchestration for creating a fragment and attaching its media if present.
+    ///
+    /// Sender ordering (P1): media bytes are uploaded and the `fragment_media`
+    /// row is inserted BEFORE the `shared_fragments` row, so a received fragment
+    /// row implies its media metadata/object already exists. This shrinks (but
+    /// does not eliminate — receivers still retry) the sender-side race where
+    /// the fragment row was visible seconds before its media row.
+    /// Rollback/cleanup is preserved: if the fragment insert fails with a
+    /// genuine error, the just-written media row and storage object are removed.
+    /// Duplicate/collision outcomes mean the row already exists and is owned
+    /// correctly (or belongs to someone else) — those are rethrown untouched.
     public func createFragmentWithMedia(_ fragment: SharedFragment) async throws -> SharedFragment {
-        let created = try await createFragment(fragment)
-        if let localURL = fragment.mediaReference?.localFileURL {
-            do {
-                let mediaRef = try await createFragmentMedia(
-                    fragmentID: fragment.id,
-                    roomID: fragment.roomId,
-                    localFileURL: localURL
-                )
-                var updated = created
-                updated.mediaReference = mediaRef
-                return updated
-            } catch {
-                // Media upload or metadata attachment failed. Rollback the created shared_fragments row
-                // to prevent leaving an orphaned fragment record with broken media references.
-                try? await deleteFragment(fragmentID: fragment.id, roomID: fragment.roomId)
+        // P1: photo/video/audio require a local media file. Notes legitimately
+        // have none. Previously a nil localURL silently returned success,
+        // producing server fragment rows with no possible media.
+        if fragment.type != .note, fragment.mediaReference?.localFileURL == nil {
+            throw SupabaseRoomError.validationFailure(
+                "Fragment of type '\(fragment.type.rawValue)' requires a local media file, but none was provided."
+            )
+        }
+
+        guard let localURL = fragment.mediaReference?.localFileURL else {
+            return try await createFragment(fragment)
+        }
+
+        // 1. Upload bytes + insert fragment_media row first.
+        let mediaRef = try await createFragmentMedia(
+            fragmentID: fragment.id,
+            roomID: fragment.roomId,
+            localFileURL: localURL
+        )
+
+        // 2. Insert the fragment row referencing it.
+        do {
+            let created = try await createFragment(fragment)
+            var updated = created
+            updated.mediaReference = mediaRef
+            return updated
+        } catch {
+            if case SupabaseRoomError.duplicate = error {
+                // Fragment ID collision with another user's row (determined
+                // inside createFragment) — not ours; do not touch remote state.
                 throw error
             }
+            if case SupabaseRoomError.validationFailure = error {
+                // Author/room collision determined inside createFragment — the
+                // conflicting row is not ours; do not touch remote state.
+                throw error
+            }
+            // Genuine failure after media was written: roll back our media row
+            // and storage object (best effort), then propagate.
+            if let fragmentUUID = UUID(uuidString: fragment.id),
+               let roomUUID = UUID(uuidString: fragment.roomId) {
+                try? await client
+                    .from("fragment_media")
+                    .delete()
+                    .eq("fragment_id", value: fragmentUUID)
+                    .eq("room_id", value: roomUUID)
+                    .execute()
+            }
+            if let storagePath = mediaRef.storagePath {
+                _ = try? await client.storage
+                    .from(Self.mediaBucketName)
+                    .remove(paths: [storagePath])
+            }
+            throw error
         }
-        return created
     }
 
     // MARK: - Media Upload

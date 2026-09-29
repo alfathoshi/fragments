@@ -47,6 +47,20 @@ final class MomentManager {
     /// In-flight media metadata received before the corresponding fragment row arrived via Realtime.
     private var pendingRemoteMedia: [String: (media: SharedMediaReference, roomID: String)] = [:]
 
+    /// Bounded retry schedule for receiver-side media hydration (P0-1/P0-2).
+    /// A fragment row is visible seconds before its media row, and downloads
+    /// can fail transiently — so lookups/downloads retry on this schedule,
+    /// then stop. Never retried indefinitely.
+    static let mediaHydrationDelays: [TimeInterval] = [0.5, 1.0, 2.0]
+
+    /// Hydration tasks in flight, keyed by "roomID/fragmentID".
+    /// Single choke point for media downloads: if the fragment and media
+    /// realtime handlers race on the same fragment, only one download runs.
+    private var mediaHydrationTasks: [String: Task<Void, Never>] = [:]
+
+    /// Fragments whose remote media has been successfully attached this session.
+    private var hydratedMediaFragmentIDs: Set<String> = []
+
     private var modelContext: ModelContext?
     /// Reference to the currently running Live Activity (nil when no session is active).
     private var liveActivity: Activity<MomentActivityAttributes>?
@@ -825,6 +839,7 @@ final class MomentManager {
         current.fragments[idx].mediaResourceName = localURL.path
         self.activeSession = current
         self.persistSession(current)
+        print("[Media] UI state updated: \(fragmentID)")
     }
 
     /// Downloads remote media for session fragments that reference a remote
@@ -853,60 +868,143 @@ final class MomentManager {
         }
         guard !missing.isEmpty else { return }
         print("🖼️ [MomentManager] Backfilling media for \(missing.count) fragment(s) in room: \(roomID)")
-        Task { [weak self] in
-            for frag in missing {
-                guard let ref = await MainActor.run(resultType: SharedMediaReference?.self, body: {
-                    RoomManager.shared.fragments.first(where: { $0.id == frag.id.uuidString })?.mediaReference
-                }), ref.storagePath != nil else { continue }
-                do {
-                    let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: ref, roomID: roomID)
-                    await MainActor.run {
-                        self?.attachLocalMedia(localURL: downloadedURL, fragmentID: frag.id.uuidString, roomID: roomID)
-                    }
-                } catch {
-                    print("⚠️ [MomentManager] Media backfill failed for fragment \(frag.id): \(error)")
-                }
-            }
+        for frag in missing {
+            hydrateFragmentMedia(fragmentID: frag.id.uuidString, roomID: roomID)
         }
     }
 
+    // MARK: - Receiver-Side Media Hydration (P0-1 / P0-2 / P0-3)
+
+    /// Single choke point for hydrating remote media of one fragment.
+    ///
+    /// Works regardless of arrival order (P0-3): when the fragment event wins,
+    /// `knownMedia` is nil and the `fragment_media` row is looked up with
+    /// bounded backoff; when the media event wins, its reference is passed in
+    /// and used directly. Either way the same task key ("roomID/fragmentID")
+    /// guarantees only one download executes — a second caller while hydration
+    /// is in flight, or after success, is a no-op (idempotent).
+    ///
+    /// Text/note fragments never need hydration; callers must not invoke this
+    /// for them. Uses only the existing fetch → signed-URL → download →
+    /// attach pipeline. Never retries indefinitely.
+    func hydrateFragmentMedia(fragmentID: String, roomID: String, knownMedia: SharedMediaReference? = nil) {
+        let key = "\(roomID)/\(fragmentID)"
+        guard !hydratedMediaFragmentIDs.contains(key) else { return }
+        guard mediaHydrationTasks[key] == nil else { return }
+
+        print("[Media] Looking up fragment_media: \(fragmentID)")
+        mediaHydrationTasks[key] = Task { [weak self] in
+            defer { self?.mediaHydrationTasks[key] = nil }
+            guard let self else { return }
+
+            // Hydration targets the Supabase path only; other backends keep
+            // their own sync engines.
+            let isSupabaseRoom: Bool = await MainActor.run {
+                self.activeSession?.room?.backend == .supabase
+            }
+            guard isSupabaseRoom else { return }
+
+            var ref = knownMedia
+            var lastError: Error?
+            let delays = Self.mediaHydrationDelays
+
+            // Attempt 0 runs immediately, then one attempt per backoff delay.
+            for attempt in 0...delays.count {
+                if Task.isCancelled { return }
+                if attempt > 0 {
+                    let wait = delays[attempt - 1]
+                    print("[Media] Retrying in \(wait)s: \(fragmentID) (attempt \(attempt + 1)/\(delays.count + 1))")
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    if Task.isCancelled { return }
+                }
+
+                // 1. Resolve the media reference.
+                if ref == nil {
+                    do {
+                        if let found = try await SupabaseRoomRepository.shared.fetchFragmentMedia(fragmentID: fragmentID, roomID: roomID) {
+                            print("[Media] fragment_media FOUND: \(found.storagePath ?? "?")")
+                            ref = found
+                        } else {
+                            print("[Media] fragment_media NOT FOUND: \(fragmentID)")
+                        }
+                    } catch {
+                        print("[Media] fragment_media lookup FAILED: \(fragmentID): \(error)")
+                        lastError = error
+                    }
+                }
+                guard let mediaRef = ref, mediaRef.storagePath != nil else { continue }
+
+                // 2. Skip work already completed by another path. A nil result
+                // means the fragment row hasn't arrived in-session yet — end
+                // quietly WITHOUT marking done; the fragment-side handler will
+                // hydrate on arrival (P0-3, either order works).
+                let alreadyLocal: Bool? = await MainActor.run {
+                    guard let session = self.activeSession, session.isShared,
+                          let uuid = UUID(uuidString: fragmentID),
+                          session.fragments.contains(where: { $0.id == uuid }) else { return nil }
+                    guard let frag = session.fragments.first(where: { $0.id == uuid }) else { return nil }
+                    if let local = frag.mediaResourceName, !local.isEmpty,
+                       FileManager.default.fileExists(atPath: local) { return true }
+                    if let cached = RemoteMediaService.shared.cachedMediaURL(for: mediaRef, roomID: roomID) {
+                        self.attachLocalMedia(localURL: cached, fragmentID: fragmentID, roomID: roomID)
+                        return true
+                    }
+                    return false
+                }
+                guard let done = alreadyLocal else { return }
+                if done {
+                    await MainActor.run { self.hydratedMediaFragmentIDs.insert(key) }
+                    return
+                }
+
+                // 3. Download via the existing signed-URL pipeline.
+                print("[Media] Downloading: \(mediaRef.storagePath ?? "?")")
+                do {
+                    let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: mediaRef, roomID: roomID)
+                    let bytes = (try? FileManager.default.attributesOfItem(atPath: downloadedURL.path)[.size] as? Int) ?? -1
+                    print("[Media] Download success: \(bytes) bytes")
+                    await MainActor.run {
+                        self.attachLocalMedia(localURL: downloadedURL, fragmentID: fragmentID, roomID: roomID)
+                        self.hydratedMediaFragmentIDs.insert(key)
+                    }
+                    return
+                } catch {
+                    print("[Media] Download FAILED: \(error)")
+                    lastError = error
+                }
+            }
+
+            print("[Media] Download FAILED: fragment \(fragmentID) room \(roomID) path \(ref?.storagePath ?? "unknown") error \(lastError?.localizedDescription ?? "media row never appeared") — giving up after \(delays.count + 1) attempts")
+        }
+    }
+
+    /// Cancels all in-flight hydration and resets completion marks.
+    /// Called whenever the active session ends so a rejoined session rehydrates
+    /// cleanly and no task outlives its session.
+    private func cancelMediaHydration() {
+        for task in mediaHydrationTasks.values { task.cancel() }
+        mediaHydrationTasks.removeAll()
+        hydratedMediaFragmentIDs.removeAll()
+    }
+
     private func handleRealtimeFragmentCreated(_ sharedFrag: SharedFragment) {
+        print("[Realtime] Received fragment: \(sharedFrag.id) type: \(sharedFrag.type.rawValue)")
         guard var current = activeSession, current.isShared else { return }
         guard let targetUUID = UUID(uuidString: sharedFrag.id) else { return }
 
         var domainFrag = sharedFrag.toFragment()
 
-        // Check if media was received or cached in advance
+        // Synchronous cache fast paths only. All downloading flows through
+        // hydrateFragmentMedia below (bounded retry, deduplicated), so no
+        // parallel fire-once download is started here.
         if domainFrag.mediaResourceName == nil {
             if let pending = pendingRemoteMedia[sharedFrag.id] {
                 if let cached = RemoteMediaService.shared.cachedMediaURL(for: pending.media, roomID: pending.roomID) {
                     domainFrag.mediaResourceName = cached.path
-                } else {
-                    Task { [weak self] in
-                        do {
-                            let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: pending.media, roomID: pending.roomID)
-                            await MainActor.run {
-                                self?.attachLocalMedia(localURL: downloadedURL, fragmentID: sharedFrag.id, roomID: pending.roomID)
-                            }
-                        } catch {
-                            print("⚠️ [MomentManager] Failed to download pending media for fragment \(sharedFrag.id): \(error)")
-                        }
-                    }
                 }
             } else if let mediaRef = sharedFrag.mediaReference {
                 if let cached = RemoteMediaService.shared.cachedMediaURL(for: mediaRef, roomID: sharedFrag.roomId) {
                     domainFrag.mediaResourceName = cached.path
-                } else {
-                    Task { [weak self] in
-                        do {
-                            let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: mediaRef, roomID: sharedFrag.roomId)
-                            await MainActor.run {
-                                self?.attachLocalMedia(localURL: downloadedURL, fragmentID: sharedFrag.id, roomID: sharedFrag.roomId)
-                            }
-                        } catch {
-                            print("⚠️ [MomentManager] Failed to download media for fragment \(sharedFrag.id): \(error)")
-                        }
-                    }
                 }
             }
         }
@@ -935,6 +1033,21 @@ final class MomentManager {
         self.activeSession = current
         self.persistSession(current)
         self.updateLiveActivity(session: current)
+
+        // P0-1: realtime rows carry no embedded fragment_media. If this
+        // non-note fragment is still media-less, hydrate via fragment_media
+        // lookup with bounded backoff (deduped against a media-side task).
+        // Notes legitimately have no media — never look them up.
+        if sharedFrag.type != .note {
+            let stillMissing: Bool = {
+                guard let frag = current.fragments.first(where: { $0.id == targetUUID }) else { return false }
+                guard let local = frag.mediaResourceName, !local.isEmpty else { return true }
+                return !FileManager.default.fileExists(atPath: local)
+            }()
+            if stillMissing {
+                hydrateFragmentMedia(fragmentID: sharedFrag.id, roomID: sharedFrag.roomId)
+            }
+        }
 
         if let room = current.room {
             try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
@@ -983,6 +1096,13 @@ final class MomentManager {
         guard let targetUUID = UUID(uuidString: fragmentID) else { return }
 
         pendingRemoteMedia.removeValue(forKey: fragmentID)
+        // Stop any in-flight hydration for the deleted fragment.
+        let hydrationSuffix = "/\(fragmentID)"
+        for key in mediaHydrationTasks.keys where key.hasSuffix(hydrationSuffix) {
+            mediaHydrationTasks[key]?.cancel()
+            mediaHydrationTasks[key] = nil
+            hydratedMediaFragmentIDs.remove(key)
+        }
 
         let initialCount = current.fragments.count
         current.fragments.removeAll(where: { $0.id == targetUUID })
@@ -1001,27 +1121,10 @@ final class MomentManager {
 
     private func handleRealtimeMediaCreated(media: SharedMediaReference, fragmentID: String, roomID: String) {
         pendingRemoteMedia[fragmentID] = (media, roomID)
-
-        if let local = media.localFileURL {
-            attachLocalMedia(localURL: local, fragmentID: fragmentID, roomID: roomID)
-            return
-        }
-
-        if let cached = RemoteMediaService.shared.cachedMediaURL(for: media, roomID: roomID) {
-            attachLocalMedia(localURL: cached, fragmentID: fragmentID, roomID: roomID)
-            return
-        }
-
-        Task { [weak self] in
-            do {
-                let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: media, roomID: roomID)
-                await MainActor.run {
-                    self?.attachLocalMedia(localURL: downloadedURL, fragmentID: fragmentID, roomID: roomID)
-                }
-            } catch {
-                print("⚠️ [MomentManager] Failed to download realtime media for fragment \(fragmentID): \(error)")
-            }
-        }
+        // P0-2/P0-3: route through the single hydration choke point so a
+        // concurrent fragment-side lookup never double-downloads, and failures
+        // retry with bounded backoff instead of being swallowed.
+        hydrateFragmentMedia(fragmentID: fragmentID, roomID: roomID, knownMedia: media)
     }
 
     private func handleRealtimeMediaDeleted(storagePath: String, fragmentID: String, roomID: String) {
@@ -1156,6 +1259,7 @@ final class MomentManager {
         endLiveActivity()
         stopRemoteSyncObserver()
         stopSupabaseRealtimeObserver()
+        cancelMediaHydration()
         if session.isShared, let room = session.room, room.backend == .supabase {
             RoomManager.shared.stopRealtime(roomID: room.id)
             if RoomManager.shared.currentRoom?.id == room.id {
@@ -1188,6 +1292,7 @@ final class MomentManager {
         endLiveActivity()
         stopRemoteSyncObserver()
         stopSupabaseRealtimeObserver()
+        cancelMediaHydration()
         MultipeerSyncService.shared.stop()
 
         // 1. Remove from local collections if it was ever added
@@ -1264,6 +1369,7 @@ final class MomentManager {
         endLiveActivity()
         stopRemoteSyncObserver()
         stopSupabaseRealtimeObserver()
+        cancelMediaHydration()
         if session.isShared, let room = session.room, room.backend == .supabase {
             RoomManager.shared.stopRealtime(roomID: room.id)
             if RoomManager.shared.currentRoom?.id == room.id {
@@ -1300,6 +1406,7 @@ final class MomentManager {
         endLiveActivity()
         stopRemoteSyncObserver()
         stopSupabaseRealtimeObserver()
+        cancelMediaHydration()
         MultipeerSyncService.shared.stop()
 
         if let session = sessionToCancel, session.isShared, let room = session.room {
