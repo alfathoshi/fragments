@@ -37,6 +37,12 @@ public enum RealtimeConvergenceVerifier {
         let momentManager = MomentManager.shared
         let roomManager = RoomManager.shared
 
+        // Preserve launch-time global state: this verifier runs inside
+        // `fragmentsApp.init()` (DEBUG) and must not leak test rooms or
+        // sessions into the real onboarding/main flow.
+        let previousRoom = roomManager.currentRoom
+        let hadActiveSession = momentManager.isSessionActive
+
         // Ensure clean initial state
         if momentManager.isSessionActive {
             momentManager.cancelSession()
@@ -164,7 +170,16 @@ public enum RealtimeConvergenceVerifier {
             fragmentCount: 1
         )
 
-        momentManager.joinSharedSession(room: participantRoom)
+        // NOTE: this deliberately does NOT call `joinSharedSession(_:)`.
+        // That path starts `MultipeerSyncService` (MCNearbyServiceBrowser /
+        // Advertiser), which fires the iOS Local Network permission prompt —
+        // and this verifier executes at app launch, before the user reaches
+        // the Permissions Gate. The equivalent session + Realtime wiring is
+        // built directly so the prompt can only ever fire from the gate's
+        // Enable action or a real user-started shared moment.
+        momentManager.startSession(location: "Participant Shared Moment", isShared: true, room: participantRoom)
+        RoomManager.shared.currentRoom = participantRoom
+        momentManager.startSupabaseRealtimeObserver(roomID: participantRoomID)
         assertCondition(momentManager.isSessionActive, "Participant session active")
         assertCondition(momentManager.isSupabaseRealtimeTaskActive, "Participant Realtime observer active")
         assertCondition(!momentManager.isRemoteSyncTaskActive, "Participant does NOT start CloudKit polling")
@@ -178,6 +193,13 @@ public enum RealtimeConvergenceVerifier {
         assertCondition(!momentManager.isSessionActive, "Session cleanly terminated")
         assertCondition(!momentManager.isSupabaseRealtimeTaskActive, "Supabase Realtime observer task cancelled on teardown")
         assertCondition(!momentManager.isRemoteSyncTaskActive, "CloudKit polling task remains stopped")
+
+        // Restore pre-verifier global state so launch-time execution leaves
+        // no test room selected (a stale test currentRoom would trigger
+        // background sync/realtime for a fake room).
+        if !hadActiveSession {
+            RoomManager.shared.currentRoom = previousRoom
+        }
 
         return (passed: allPassed, log: logs)
     }

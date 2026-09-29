@@ -123,7 +123,7 @@ public struct SharedFragmentNode: View {
     private var nodeVisualHeader: some View {
         if let localURL = effectiveLocalURL,
            FileManager.default.fileExists(atPath: localURL.path) {
-            if fragment.type == .photo, let uiImage = UIImage(contentsOfFile: localURL.path) {
+            if fragment.type == .photo, isDecodableImageFile(localURL), let uiImage = UIImage(contentsOfFile: localURL.path) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()

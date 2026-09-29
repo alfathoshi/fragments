@@ -10,6 +10,14 @@ import Observation
 import CloudKit
 import Supabase
 
+/// Posted whenever shared-room metadata may have changed (realtime `roomChanged`,
+/// full refresh). Object is the room ID `String`, or nil to reconcile all rooms.
+/// `MomentManager` observes this to propagate name/category/color into saved
+/// collections + SwiftData — the receiver-side half of metadata sync.
+extension Notification.Name {
+    static let fragmentsRoomMetadataChanged = Notification.Name("fragments.roomMetadataChanged")
+}
+
 /// Central coordinator and observable state manager for collaborative Rooms.
 ///
 /// Dynamically routes room operations to either CloudKit (legacy) or Supabase (new)
@@ -204,6 +212,9 @@ public final class RoomManager {
 
             // Persist to local disk cache
             try? await localRepository.saveRooms(merged)
+
+            // Receivers reconcile saved collections/SwiftData from room metadata.
+            NotificationCenter.default.post(name: .fragmentsRoomMetadataChanged, object: nil)
         }
     }
 
@@ -622,6 +633,8 @@ public final class RoomManager {
     /// Adds a SharedFragment to the room, persisting locally first and syncing with the appropriate backend.
     /// Rolls back optimistic local state if remote synchronization fails.
     public func captureSharedFragment(_ fragment: SharedFragment) async throws {
+        // TEMPORARY trace (no behavior change).
+        print("[PhotoTrace] CAPTURE_SHARED_FRAGMENT_CALLED id=\(fragment.id) type=\(fragment.type.rawValue) roomID=\(fragment.roomId)")
         isLoading = true
         defer { isLoading = false }
 
@@ -794,7 +807,13 @@ public final class RoomManager {
     }
 
     public func startRealtime(for roomID: String) async {
-        if realtimeTask != nil && realtimeCoordinator.activeRoomID == roomID && realtimeCoordinator.connectionState == .connected {
+        // Compare normalized IDs: the coordinator stores a lowercased room ID,
+        // while callers pass canonical (uppercase) UUID strings — without this
+        // the same-room no-op never matched and every redundant call proceeded
+        // into a second overlapping coordinator start.
+        let trimmedRoomID = roomID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRoomID = UUID(uuidString: trimmedRoomID)?.uuidString.lowercased() ?? trimmedRoomID.lowercased()
+        if realtimeTask != nil && realtimeCoordinator.activeRoomID == normalizedRoomID && realtimeCoordinator.connectionState == .connected {
             return
         }
         realtimeTask?.cancel()
@@ -846,6 +865,8 @@ public final class RoomManager {
                 rooms.insert(updatedRoom, at: 0)
             }
             try? await localRepository.saveRoom(updatedRoom)
+            // Receivers reconcile saved collections/SwiftData from room metadata.
+            NotificationCenter.default.post(name: .fragmentsRoomMetadataChanged, object: updatedRoom.id)
 
         case .roomDeleted(let deletedID):
             if currentRoom?.id == deletedID {
@@ -1131,5 +1152,32 @@ public final class RoomManager {
         }
         self.rooms.removeAll { $0.backend == .supabase }
         try? await localRepository.saveRooms(self.rooms)
+    }
+
+    /// Resets ALL in-memory Room state for permanent account deletion.
+    /// Local disk cache is cleared separately via `localRepository.clearAll()`.
+    /// Sign-out must NOT call this (it preserves local collaborative state).
+    public func resetForAccountDeletion() {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        currentDetailsTask?.cancel()
+        currentDetailsTask = nil
+        // Terminate fan-out streams so stopped observers release.
+        for continuation in realtimeContinuations.values {
+            continuation.finish()
+        }
+        realtimeContinuations = [:]
+        if currentRoom?.backend == .supabase {
+            stopRealtime(roomID: currentRoom?.id)
+        }
+        self.currentRoom = nil
+        self.members = []
+        self.fragments = []
+        self.rooms = []
+        self.locallyRemovedRoomIDs = []
+        self.profileCache = [:]
+        self.isLoading = false
+        self.isSyncing = false
+        self.lastError = nil
     }
 }

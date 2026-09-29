@@ -87,6 +87,8 @@ final class ActiveMomentViewModel {
     }
 
     func handleCapturedSharedFragment(_ sharedFragment: SharedFragment) {
+        // TEMPORARY trace (no behavior change).
+        print("[PhotoTrace] VM_HANDLE_CAPTURED_SHARED_FRAGMENT id=\(sharedFragment.id) type=\(sharedFragment.type.rawValue)")
         let frag = sharedFragment.toFragment()
         handleCapturedFragment(frag)
     }

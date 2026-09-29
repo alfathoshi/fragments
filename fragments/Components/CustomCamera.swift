@@ -128,6 +128,7 @@ public struct CustomCamera: View {
         }
         .onAppear {
             if isActive {
+                cameraService.prepare()
                 cameraService.configureForPhoto()
                 cameraService.startSession()
             }

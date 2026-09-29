@@ -53,6 +53,19 @@ public func downsampleImage(at url: URL, to pointSize: CGSize, scale: CGFloat = 
     return UIImage(cgImage: downsampledImage)
 }
 
+/// Returns true when a file URL carries an image-container extension that
+/// ImageIO can decode. `.mov`/`.m4a`/other media must NEVER reach
+/// `CGImageSource`/`UIImage(contentsOfFile:)` — routing them there logs
+/// `createImageAtIndex ... 'ftyp'` plugin errors and yields nothing.
+func isDecodableImageFile(_ url: URL) -> Bool {
+    switch url.pathExtension.lowercased() {
+    case "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tiff", "tif", "bmp":
+        return true
+    default:
+        return false
+    }
+}
+
 // MARK: - Fragment Type
 
 public enum FragmentType: String, CaseIterable, Identifiable, Hashable {
@@ -158,7 +171,49 @@ public struct Fragment: Identifiable, Hashable {
     }
 
     // MARK: - Spatial Scattering Engine
-    
+
+    /// Canonical default spot used by `Fragment.init` / `SharedFragment.init`
+    /// when no coordinates are supplied. Several stacked fragments share it,
+    /// so it must be treated as "needs placement" rather than a real position.
+    public static let defaultSpotPhi: Double = 0.08
+    public static let defaultSpotTheta: Double = 0.35
+
+    /// Resolves stable coordinates for a fragment joining `existing`.
+    ///
+    /// Single choke point for placement: keeps stored coordinates verbatim
+    /// UNLESS they are unset (0,0), the shared default spot while siblings
+    /// exist, or within `epsilon` of another fragment — in which case it
+    /// resamples once via the min-distance sampler. Pure function of
+    /// (fragment, existing set): existing nodes never move, hydration and
+    /// realtime metadata updates never reposition, and only genuinely new or
+    /// colliding fragments receive fresh coordinates.
+    public static func resolveCoordinates(
+        phi: Double,
+        theta: Double,
+        radiusFactor: Double,
+        selfID: UUID,
+        existing: [Fragment],
+        epsilon: Double = 0.06
+    ) -> (phi: Double, theta: Double, radiusFactor: Double) {
+        let others = existing.filter { $0.id != selfID }
+        guard !others.isEmpty else {
+            return (phi, theta, radiusFactor)
+        }
+        let isUnset = phi == 0.0 && theta == 0.0
+        let isDefaultSpot = abs(phi - defaultSpotPhi) < 0.001 && abs(theta - defaultSpotTheta) < 0.001
+        var collides = isUnset || isDefaultSpot
+        if !collides {
+            collides = others.contains {
+                abs($0.phi - phi) < epsilon && abs($0.theta - theta) < epsilon
+            }
+        }
+        guard collides else {
+            return (phi, theta, radiusFactor)
+        }
+        let coords = generateScatteredCoordinates(existing: existing)
+        return (coords.phi, coords.theta, coords.radiusFactor)
+    }
+
     /// Generates distributed spherical coordinates that avoid overlapping with existing fragments.
     public static func generateScatteredCoordinates(existing: [Fragment] = []) -> (phi: Double, theta: Double, radiusFactor: Double) {
         if existing.isEmpty {
@@ -284,7 +339,7 @@ public struct Fragment: Identifiable, Hashable {
 
     /// Downsampled thumbnail for fast 60 FPS sphere rendering (allocates < 0.2 MB RAM per image)
     public var thumbnailImage: UIImage? {
-        guard type == .photo, let url = mediaURL else { return nil }
+        guard type == .photo, let url = mediaURL, isDecodableImageFile(url) else { return nil }
         let key = url.lastPathComponent as NSString
         if let cached = photoThumbnailCache.object(forKey: key) {
             return cached
@@ -303,7 +358,7 @@ public struct Fragment: Identifiable, Hashable {
 
     /// Screen-fitted image for FragmentDetailView modal inspection
     public var loadedImage: UIImage? {
-        guard type == .photo, let url = mediaURL else { return nil }
+        guard type == .photo, let url = mediaURL, isDecodableImageFile(url) else { return nil }
         let key = url.lastPathComponent as NSString
         if let cached = fullImageCache.object(forKey: key) {
             return cached

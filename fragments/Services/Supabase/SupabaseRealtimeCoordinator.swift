@@ -78,6 +78,12 @@ public final class SupabaseRealtimeCoordinator {
     private var subscriptions: [RealtimeSubscription] = []
     private var authObserverTask: Task<Void, Never>?
 
+    /// Normalized room ID of a `start()` currently in flight.
+    /// Prevents a second overlapping start for the same room from grabbing the
+    /// cached channel mid-subscribe and registering its four postgres_changes
+    /// callbacks after `subscribe()` (which the SDK silently drops).
+    private var startingRoomID: String? = nil
+
     // MARK: - Multi-subscriber Event Stream
     private var continuations: [UUID: AsyncStream<SupabaseRealtimeEvent>.Continuation] = [:]
 
@@ -142,8 +148,20 @@ public final class SupabaseRealtimeCoordinator {
 
         let normalizedRoomID = UUID(uuidString: trimmed)?.uuidString.lowercased() ?? trimmed.lowercased()
 
+        print("[Realtime] Start requested: \(normalizedRoomID)")
+
         // 1. Prevent duplicate subscriptions to the same active room
         if activeRoomID == normalizedRoomID, channel != nil, connectionState == .connected {
+            return
+        }
+
+        // 1b. Single-flight: a second overlapping start for the same room must
+        // not create another channel — `client.channel()` returns the cached
+        // channel, and registering on it mid-subscribe drops all four
+        // postgres_changes callbacks (rooms, room_members, shared_fragments,
+        // fragment_media). The in-flight start completes the subscription.
+        if startingRoomID == normalizedRoomID {
+            print("[Realtime] Start already in flight, skipping: \(normalizedRoomID)")
             return
         }
 
@@ -155,7 +173,16 @@ public final class SupabaseRealtimeCoordinator {
         // 3. Authenticated session guard (RLS requires auth.uid())
         guard supabaseService.isAuthenticated else {
             connectionState = .error("Authentication required")
+            print("[Realtime] Start failed: \(normalizedRoomID) error=notAuthenticated")
             throw SupabaseRealtimeError.notAuthenticated
+        }
+
+        startingRoomID = normalizedRoomID
+        defer {
+            // Cleared on success, failure, and cancellation alike.
+            if startingRoomID == normalizedRoomID {
+                startingRoomID = nil
+            }
         }
 
         activeRoomID = normalizedRoomID
@@ -238,12 +265,16 @@ public final class SupabaseRealtimeCoordinator {
 
         self.channel = newChannel
 
-        // 10. Subscribe asynchronously
+        // 10. Subscribe asynchronously. Only this (first) start marks the
+        // connection connected — an overlapping start returns via the
+        // single-flight guard above and never touches connectionState.
         do {
             try await newChannel.subscribeWithError()
             self.connectionState = .connected
+            print("[Realtime] Channel subscribed: \(normalizedRoomID)")
         } catch {
             self.connectionState = .error("Failed to connect: \(error.localizedDescription)")
+            print("[Realtime] Start failed: \(normalizedRoomID) error=\(error)")
             throw SupabaseRealtimeError.subscriptionFailed(error.localizedDescription)
         }
     }

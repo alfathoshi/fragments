@@ -210,4 +210,81 @@ public final class SupabaseService {
             throw error
         }
     }
+
+    // MARK: - Permanent Account Deletion
+
+    /// Server-reported outcome of the privileged `delete-account` Edge Function.
+    /// `appleRevoked` is true ONLY when Apple's revoke endpoint accepted the
+    /// stored refresh token — never assumed.
+    public struct DeleteAccountResult: Decodable, Sendable {
+        public let success: Bool
+        public let apple: AppleDeletionResult?
+
+        public struct AppleDeletionResult: Decodable, Sendable {
+            public let revoked: Bool
+            public let reason: String
+        }
+    }
+
+    /// Permanently deletes the caller's entire account via the privileged
+    /// `delete-account` Edge Function (service-role, server-side). The client
+    /// never touches `auth.admin` and holds no service-role key.
+    ///
+    /// Throws on any server failure — callers must keep the account
+    /// authenticated, keep local data intact, and surface the error with
+    /// retry. Never invoked with `try?`.
+    @discardableResult
+    public func deleteAccount() async throws -> DeleteAccountResult {
+        guard isAuthenticated else {
+            throw SupabaseRoomError.notAuthenticated
+        }
+        struct EmptyBody: Encodable, Sendable {}
+        do {
+            let result: DeleteAccountResult = try await client.functions.invoke(
+                "delete-account",
+                options: FunctionInvokeOptions(body: EmptyBody())
+            )
+            guard result.success else {
+                throw SupabaseRoomError.databaseFailure("Account deletion was not confirmed by the server.")
+            }
+            self.lastError = nil
+            return result
+        } catch let error as SupabaseRoomError {
+            throw error
+        } catch {
+            throw SupabaseRoomError.databaseFailure(serverFunctionErrorMessage(error))
+        }
+    }
+
+    /// Forwards a Sign in with Apple authorization code to the
+    /// `link-apple-credentials` Edge Function, which exchanges it server-side
+    /// and stores the Apple refresh token for future deletion-time revocation.
+    /// Fire-and-forget: failures must never break sign-in; a missing link is
+    /// honestly reported at deletion time instead.
+    public func linkAppleAuthorizationCode(_ code: String) async {
+        guard isAuthenticated, !code.isEmpty else { return }
+        struct LinkBody: Encodable, Sendable {
+            let authorization_code: String
+        }
+        do {
+            try await client.functions.invoke(
+                "link-apple-credentials",
+                options: FunctionInvokeOptions(body: LinkBody(authorization_code: code))
+            )
+        } catch {
+            // Intentionally swallowed: linking is best-effort. Do NOT log the code.
+            print("⚠️ [SupabaseService] Apple credential linking failed (revocation may be unavailable at deletion).")
+        }
+    }
+
+    /// Extracts a human-readable message from an Edge Function invocation error.
+    private func serverFunctionErrorMessage(_ error: Error) -> String {
+        if let functionsError = error as? FunctionsError,
+           case .httpError(let code, let data) = functionsError,
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data),
+           let message = decoded["detail"] ?? decoded["error"] ?? decoded["message"] {
+            return "Server error (\(code)): \(message)"
+        }
+        return error.localizedDescription
+    }
 }

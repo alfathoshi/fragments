@@ -46,6 +46,15 @@ public final class CameraService: NSObject, @unchecked Sendable {
     public init(isForVideo: Bool = false) {
         self.isForVideo = isForVideo
         super.init()
+        // NOTE: no permission request here. `AVCaptureDevice.requestAccess`
+        // fires a system prompt, so it must only run after an explicit user
+        // interaction — the Permissions Gate Enable action, or `prepare()`
+        // when the capture UI actually appears. Never request from init.
+    }
+
+    /// Explicit point-of-use entry point, called when the capture UI appears.
+    /// Safe to call repeatedly; only prompts when status is `.notDetermined`.
+    public func prepare() {
         checkPermissions()
     }
 
@@ -263,6 +272,8 @@ public final class CameraService: NSObject, @unchecked Sendable {
     // MARK: - Photo Capture
 
     public func capturePhoto(isFlashOn: Bool, completion: @escaping (UIImage?, URL?) -> Void) {
+        // TEMPORARY trace (no behavior change).
+        print("[PhotoTrace] CAMERA_CAPTURE_START")
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             self.photoCaptureCompletion = completion
@@ -310,6 +321,12 @@ public final class CameraService: NSObject, @unchecked Sendable {
                 if let data = image.jpegData(compressionQuality: 0.85) {
                     try? data.write(to: fileURL)
                 }
+
+                // TEMPORARY trace (no behavior change).
+                print("[PhotoTrace] CAMERA_CAPTURE_COMPLETION simulator")
+                print("[PhotoTrace] capturedFileURL: \(fileURL.path)")
+                print("[PhotoTrace] fileExists: \(FileManager.default.fileExists(atPath: fileURL.path))")
+                print("[PhotoTrace] fileSize: \((try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int) ?? -1)")
 
                 DispatchQueue.main.async {
                     completion(image, fileURL)
@@ -450,6 +467,8 @@ public final class CameraService: NSObject, @unchecked Sendable {
 extension CameraService: AVCapturePhotoCaptureDelegate {
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         guard error == nil, let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
+            // TEMPORARY trace (no behavior change).
+            print("[PhotoTrace] CAMERA_CAPTURE_COMPLETION device-failure error: \(error?.localizedDescription ?? "nil")")
             DispatchQueue.main.async {
                 self.photoCaptureCompletion?(nil, nil)
             }
@@ -460,6 +479,12 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         let filename = "IMG_\(UUID().uuidString).jpg"
         let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
         try? data.write(to: fileURL)
+
+        // TEMPORARY trace (no behavior change).
+        print("[PhotoTrace] CAMERA_CAPTURE_COMPLETION device")
+        print("[PhotoTrace] capturedFileURL: \(fileURL.path)")
+        print("[PhotoTrace] fileExists: \(FileManager.default.fileExists(atPath: fileURL.path))")
+        print("[PhotoTrace] fileSize: \((try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int) ?? -1)")
 
         DispatchQueue.main.async {
             self.photoCaptureCompletion?(image, fileURL)

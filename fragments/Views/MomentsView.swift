@@ -163,8 +163,8 @@ struct MomentsView: View {
                 .sheet(item: $viewModel.editingCollection) { collection in
                     FolderDetailBottomSheet(
                         collection: collection,
-                        onUpdateColor: { newColor in
-                            viewModel.momentManager.updateMomentColor(id: collection.id, roomID: collection.roomID, color: newColor)
+                        onSaveMetadata: { name, category, color in
+                            viewModel.momentManager.updateMomentMetadata(id: collection.id, roomID: collection.roomID, name: name, category: category, color: color)
                         },
                         onDelete: {
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
@@ -342,11 +342,10 @@ struct MomentsView: View {
 
 public struct FolderDetailBottomSheet: View {
     public let collection: FolderCollection
-    public var onUpdateColor: ((Color?) -> Void)? = nil
+    public var onSaveMetadata: ((String, String, Color?) -> Void)? = nil
     public var onDelete: (() -> Void)? = nil
     public var onLeave: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @State private var folderColor: Color?
     @State private var showColorPicker = false
     @State private var selectedFragment: FolderItem? = nil
     @State private var isFolderOpen = false
@@ -372,15 +371,14 @@ public struct FolderDetailBottomSheet: View {
 
     public init(
         collection: FolderCollection,
-        onUpdateColor: ((Color?) -> Void)? = nil,
+        onSaveMetadata: ((String, String, Color?) -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onLeave: (() -> Void)? = nil
     ) {
         self.collection = collection
-        self.onUpdateColor = onUpdateColor
+        self.onSaveMetadata = onSaveMetadata
         self.onDelete = onDelete
         self.onLeave = onLeave
-        self._folderColor = State(initialValue: collection.color)
     }
 
     public var body: some View {
@@ -395,7 +393,7 @@ public struct FolderDetailBottomSheet: View {
                             size: CGSize(width: 180, height: 178),
                             isLocked: true,
                             isShared: collection.isShared,
-                            folderColor: folderColor,
+                            folderColor: collection.color,
                             category: collection.category,
                             onTapItem: { item in
                                 selectedFragment = item
@@ -460,9 +458,9 @@ public struct FolderDetailBottomSheet: View {
                     Button {
                         showColorPicker = true
                     } label: {
-                            Image(systemName: "paintpalette.fill")
-                                .font(.system(size: 20))
-                        
+                            Image(systemName: "pencil")
+                                .font(.system(size: 16))
+
                     }
                     .accessibilityLabel("Customize folder color")
                 }
@@ -484,7 +482,7 @@ public struct FolderDetailBottomSheet: View {
                             showDeleteConfirmation = true
                         } label: {
                             Image(systemName: "trash.fill")
-                                .font(.system(size: 20))
+                                .font(.system(size: 16))
                         }
                         .tint(.red)
                         .accessibilityLabel("Delete moment")
@@ -522,8 +520,14 @@ public struct FolderDetailBottomSheet: View {
             .blur(radius: showColorPicker ? 16 : 0)
             .animation(.easeInOut(duration: 0.28), value: showColorPicker)
             .sheet(isPresented: $showColorPicker) {
-                FolderColorPickerSheet(items: collection.items, selectedColor: $folderColor) { newColor in
-                    onUpdateColor?(newColor)
+                FolderColorPickerSheet(
+                    items: collection.items,
+                    initialName: collection.name,
+                    initialCategory: collection.category,
+                    initialColor: collection.color
+                ) { name, category, color in
+                    onSaveMetadata?(name, category, color)
+                    dismiss()
                 }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -669,111 +673,193 @@ public struct FolderThemeColor: Identifiable, Hashable {
             swatchGradient: [Color(red: 1.0, green: 0.45, blue: 0.65), Color.pink]
         )
     ]
+
+    /// Resolves the theme matching a saved color (nil = Default theme).
+    public static func theme(for color: Color?) -> FolderThemeColor {
+        allThemes.first(where: { $0.color == color }) ?? defaultTheme
+    }
 }
 
-// MARK: - 6-Color Palette Sheet
+// MARK: - Edit Moment Sheet (name + category + color, Complete-Sheet style)
 
+/// Edit Moment form presented from a moment's detail sheet. Mirrors the
+/// Complete Moment Sheet sections (MOMENT NAME / CATEGORY / FOLDER COLOR)
+/// with values pre-populated from the saved moment. Save persists via
+/// `onSave`; drafts never touch the manager until then.
 public struct FolderColorPickerSheet: View {
     public var items: [FolderItem] = []
-    @Binding public var selectedColor: Color?
-    public var onColorChanged: ((Color?) -> Void)? = nil
+    public var initialName: String = ""
+    public var initialCategory: String = "Life"
+    public var onSave: ((String, String, Color?) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @State private var isFolderOpen = false
+    @State private var editName: String
+    @State private var selectedCategory: String
+    @State private var selectedTheme: FolderThemeColor
 
     public init(
         items: [FolderItem] = [],
-        selectedColor: Binding<Color?>,
-        onColorChanged: ((Color?) -> Void)? = nil
+        initialName: String = "",
+        initialCategory: String = "Life",
+        initialColor: Color? = nil,
+        onSave: ((String, String, Color?) -> Void)? = nil
     ) {
         self.items = items
-        self._selectedColor = selectedColor
-        self.onColorChanged = onColorChanged
-    }
-
-    private var previewItems: [FolderItem] {
-        items
+        self.initialName = initialName
+        self.initialCategory = initialCategory
+        self.onSave = onSave
+        self._editName = State(initialValue: initialName)
+        self._selectedCategory = State(initialValue: initialCategory)
+        self._selectedTheme = State(initialValue: FolderThemeColor.theme(for: initialColor))
     }
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 22) {
-                // Live FolderView preview dynamically updating its background color
-                MomentFolder(
-                    items: previewItems,
-                    isOpen: .constant(false),
-                    size: CGSize(width: 156, height: 154),
-                    isLocked: true,
-                    folderColor: selectedColor
-                )
-                .padding(.top, 20)
-                .padding(.bottom, 8)
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Live preview reflecting the draft color
+                    MomentFolder(
+                        items: items,
+                        isOpen: .constant(false),
+                        size: CGSize(width: 156, height: 154),
+                        isLocked: true,
+                        folderColor: selectedTheme.color
+                    )
+                    .padding(.top, 20)
+                    .padding(.bottom, 8)
 
-                // 6 Swatches in a balanced row
-                HStack(spacing: 16) {
-                    ForEach(FolderThemeColor.allThemes) { theme in
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-                                selectedColor = theme.color
-                                onColorChanged?(theme.color)
-                            }
-                        } label: {
-                            VStack(spacing: 8) {
-                                ZStack {
-                                    Circle()
-                                        .fill(
-                                            LinearGradient(
-                                                colors: theme.swatchGradient,
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
+                    // Moment Title Input
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("MOMENT NAME")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        TextField(initialName.isEmpty ? "Moment name" : initialName, text: $editName)
+                            .font(.system(size: 16, weight: .medium))
+                            .padding(14)
+                            .background(
+                                Color(uiColor: .secondarySystemGroupedBackground),
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                            )
+                    }
+                    .padding(.horizontal, 20)
+
+                    // Category / Vibe Pills
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("CATEGORY")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(MomentCategory.allCategoryNames, id: \.self) { cat in
+                                    Button {
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                        selectedCategory = cat
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            if let symbol = MomentCategory.symbol(for: cat) {
+                                                Image(systemName: symbol)
+                                                    .font(.system(size: 12, weight: .semibold))
+                                            }
+                                            Text(cat)
+                                                .font(.system(size: 13, weight: selectedCategory == cat ? .bold : .medium, design: .rounded))
+                                        }
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            selectedCategory == cat
+                                            ? AnyShapeStyle(Color.primary)
+                                            : AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)),
+                                            in: Capsule()
                                         )
-                                        .frame(width: 44, height: 44)
-                                        .shadow(color: (theme.color ?? Color.gray).opacity(0.35), radius: 6, y: 3)
-
-                                    if isSelected(theme) {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 15, weight: .bold))
-                                            .foregroundStyle(.white)
-                                            .shadow(color: .black.opacity(0.35), radius: 2)
+                                        .foregroundStyle(
+                                            selectedCategory == cat
+                                            ? Color(uiColor: .systemBackground) : .primary
+                                        )
                                     }
+                                    .buttonStyle(PlainButtonStyle())
                                 }
-                                .overlay(
-                                    Circle()
-                                        .stroke(isSelected(theme) ? Color.primary : Color.clear, lineWidth: 2.5)
-                                        .padding(-4)
-                                )
+                            }
+                            .padding(.horizontal, 20)
+                        }
+                    }
 
-                                Text(theme.name)
-                                    .font(.system(size: 11, weight: isSelected(theme) ? .bold : .medium))
-                                    .foregroundStyle(isSelected(theme) ? .primary : .secondary)
+                    // Theme Color Palette
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("FOLDER COLOR")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 24) {
+                            ForEach(FolderThemeColor.allThemes) { theme in
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    selectedTheme = theme
+                                } label: {
+                                    ZStack {
+                                        Circle()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: theme.swatchGradient,
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
+                                            )
+                                            .frame(width: 38, height: 38)
+                                            .shadow(color: (theme.color ?? Color.gray).opacity(0.3), radius: 4, y: 2)
+
+                                        if selectedTheme.id == theme.id {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 14, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                                    .overlay(
+                                        Circle()
+                                            .stroke(selectedTheme.id == theme.id ? Color.primary : Color.clear, lineWidth: 2)
+                                            .padding(-3)
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
                             }
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .padding(.vertical, 4)
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-                Spacer()
             }
-            .navigationTitle("Folder Color")
+            .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("Edit Moment")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
                         dismiss()
                     }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        let trimmed = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSave?(trimmed.isEmpty ? initialName : trimmed, selectedCategory, selectedTheme.color)
+                        dismiss()
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                    .glassProminentButtonStyle()
+                    .tint(.blue)
                     .font(.body.weight(.semibold))
                 }
             }
         }
-    }
-
-    private func isSelected(_ theme: FolderThemeColor) -> Bool {
-        if let themeColor = theme.color, let current = selectedColor {
-            return themeColor == current
-        }
-        return theme.color == nil && selectedColor == nil
     }
 }
 

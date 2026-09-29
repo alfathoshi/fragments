@@ -235,6 +235,136 @@ public enum MemberDisplayNameAndDiscardVerifier {
             "Media: hydration attempt budget is exactly initial + 3 retries"
         )
 
+        // MARK: - Sphere position stability (id-keyed, min-distance)
+
+        assertCondition(
+            FragmentSphere.overlapEpsilon == 0.06,
+            "Sphere: overlap epsilon is a shared configurable constant"
+        )
+
+        let siblingA = Fragment(type: .photo, title: "A", phi: 0.1, theta: 0.4)
+        let siblingB = Fragment(type: .photo, title: "B", phi: 0.12, theta: 0.42)
+        // Stable coordinates far from siblings are preserved verbatim.
+        let kept = Fragment.resolveCoordinates(
+            phi: 1.0, theta: 2.0, radiusFactor: 1.0,
+            selfID: UUID(), existing: [siblingA, siblingB],
+            epsilon: FragmentSphere.overlapEpsilon
+        )
+        assertCondition(
+            kept.phi == 1.0 && kept.theta == 2.0,
+            "Sphere: non-colliding coordinates are preserved (no regen on updates)"
+        )
+        // The shared default spot resamples away when siblings exist.
+        let resampled = Fragment.resolveCoordinates(
+            phi: Fragment.defaultSpotPhi, theta: Fragment.defaultSpotTheta, radiusFactor: 1.02,
+            selfID: UUID(), existing: [siblingA, siblingB],
+            epsilon: FragmentSphere.overlapEpsilon
+        )
+        let movedAway = abs(resampled.phi - siblingA.phi) >= FragmentSphere.overlapEpsilon
+            || abs(resampled.theta - siblingA.theta) >= FragmentSphere.overlapEpsilon
+        assertCondition(
+            movedAway,
+            "Sphere: default-spot fragment is resampled away from siblings"
+        )
+        // Colliding newcomer resamples; lone fragment keeps the default spot.
+        let colliding = Fragment.resolveCoordinates(
+            phi: 0.1, theta: 0.4, radiusFactor: 1.0,
+            selfID: UUID(), existing: [siblingA],
+            epsilon: FragmentSphere.overlapEpsilon
+        )
+        assertCondition(
+            abs(colliding.phi - 0.1) >= FragmentSphere.overlapEpsilon
+                || abs(colliding.theta - 0.4) >= FragmentSphere.overlapEpsilon,
+            "Sphere: colliding newcomer is resampled (min-distance)"
+        )
+        let lone = Fragment.resolveCoordinates(
+            phi: Fragment.defaultSpotPhi, theta: Fragment.defaultSpotTheta, radiusFactor: 1.02,
+            selfID: UUID(), existing: [],
+            epsilon: FragmentSphere.overlapEpsilon
+        )
+        assertCondition(
+            lone.phi == Fragment.defaultSpotPhi && lone.theta == Fragment.defaultSpotTheta,
+            "Sphere: first fragment keeps the default spot (no churn)"
+        )
+        // Id-derived fallback slots are deterministic per id.
+        let slotID = UUID()
+        let slot1 = FragmentSphere.stableScatterSlot(id: slotID, occupied: [(0.1, 0.4)])
+        let slot2 = FragmentSphere.stableScatterSlot(id: slotID, occupied: [(0.1, 0.4)])
+        assertCondition(
+            slot1.phi == slot2.phi && slot1.theta == slot2.theta,
+            "Sphere: fallback slot is deterministic for the same id"
+        )
+        assertCondition(
+            abs(slot1.phi - 0.1) >= FragmentSphere.overlapEpsilon
+                || abs(slot1.theta - 0.4) >= FragmentSphere.overlapEpsilon,
+            "Sphere: fallback slot avoids occupied positions"
+        )
+
+        // MARK: - Username validation + member preference
+
+        assertCondition(
+            UsernameValidator.normalize("  Alfathoshi ") == "alfathoshi",
+            "Username: normalization trims and lowercases"
+        )
+        assertCondition(
+            UsernameValidator.isValid("alfathoshi"),
+            "Username: valid name passes"
+        )
+        assertCondition(
+            UsernameValidator.isValid("ab") == false,
+            "Username: too-short name rejected"
+        )
+        assertCondition(
+            UsernameValidator.isValid(String(repeating: "a", count: 21)) == false,
+            "Username: too-long name rejected"
+        )
+        assertCondition(
+            UsernameValidator.isValid("no spaces") == false
+                && UsernameValidator.isValid("UPPER") == false
+                && UsernameValidator.isValid("a!b") == false,
+            "Username: spaces/uppercase/specials rejected (normalized form)"
+        )
+        assertCondition(
+            UsernameValidator.isValid("a1_") && UsernameValidator.isValid("abc"),
+            "Username: boundary lengths + underscore accepted"
+        )
+
+        let memberWithUsernameJSON = """
+        {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "room_id": "22222222-3333-4444-5555-666666666666",
+            "user_id": "33333333-4444-5555-6666-777777777777",
+            "role": "member",
+            "joined_at": "2026-09-27T12:00:00Z",
+            "profiles": {
+                "username": "alfathoshi",
+                "display_name": "Alfathoshi Signature",
+                "avatar_storage_path": null
+            }
+        }
+        """.data(using: .utf8)!
+
+        do {
+            let decoded = try JSONDecoder().decode(DatabaseRoomMember.self, from: memberWithUsernameJSON)
+            assertCondition(
+                decoded.toDomain().displayName == "alfathoshi",
+                "Username: member list prefers unique username over display name"
+            )
+        } catch {
+            assertCondition(false, "Username: member JSON with username decodes: \(error)")
+        }
+
+        // Legacy rows without the username key still decode (pre-migration).
+        do {
+            let decoded = try JSONDecoder().decode(DatabaseRoomMember.self, from: realNameJSON)
+            assertCondition(
+                decoded.toDomain().displayName == "Aoi",
+                "Username: legacy member JSON without username still resolves display name"
+            )
+        } catch {
+            assertCondition(false, "Username: legacy member JSON decodes: \(error)")
+        }
+
         return (allPassed, logs)
     }
 }

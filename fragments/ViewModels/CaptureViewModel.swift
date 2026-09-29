@@ -98,6 +98,16 @@ final class CaptureViewModel {
     }
 
     func handlePhotoCapture(image: UIImage?, fileURL: URL?) {
+        // TEMPORARY trace (no behavior change).
+        print("[PhotoTrace] HANDLE_PHOTO_CAPTURE_START")
+        switch captureContext {
+        case .room(let room):
+            print("[PhotoTrace] captureContext: room id=\(room.id) backend=\(room.backend)")
+        case .personalMoment:
+            print("[PhotoTrace] captureContext: personalMoment")
+        case .personal:
+            print("[PhotoTrace] captureContext: personal")
+        }
         guard checkCanCapture() else { return }
         let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
 
@@ -120,9 +130,16 @@ final class CaptureViewModel {
                 theta: coords.theta,
                 radiusFactor: coords.radiusFactor
             )
+            // TEMPORARY trace (no behavior change).
+            print("[PhotoTrace] FRAGMENT_CREATED")
+            print("[PhotoTrace] fragmentID: \(sharedFrag.id)")
+            print("[PhotoTrace] fragmentType: \(sharedFrag.type.rawValue)")
+            print("[PhotoTrace] onCaptureSharedFragment present: \(onCaptureSharedFragment != nil)")
             if let onCaptureShared = onCaptureSharedFragment {
+                print("[PhotoTrace] ON_CAPTURE_SHARED_FRAGMENT_CALLED")
                 onCaptureShared(sharedFrag)
             } else {
+                print("[PhotoTrace] ON_CAPTURE_FRAGMENT_FALLBACK")
                 onCaptureFragment?(sharedFrag.toFragment())
             }
             Task {
@@ -228,6 +245,8 @@ final class CaptureViewModel {
     }
 
     func handleNoteCapture(title: String, text: String, color: Color) {
+        // TEMPORARY trace: working control path for photo comparison.
+        print("[PhotoTrace] HANDLE_NOTE_CAPTURE_START (control)")
         guard checkCanCapture() else { return }
         let resolvedLocation = LocationManager.shared.currentLocationName ?? "Current Location"
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)

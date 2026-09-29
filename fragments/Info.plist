@@ -18,6 +18,14 @@
 		<string>_frag-sync._tcp</string>
 		<string>_frag-sync._udp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Fragments needs camera access to capture photo and video fragments for your moments.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fragments needs microphone access to record voice memos and video sound.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Fragments uses your location to tag moments with where they happened.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Fragments uses the local network to discover nearby devices and share moments instantly over Wi-Fi.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

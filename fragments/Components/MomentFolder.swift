@@ -584,7 +584,10 @@ public struct DefaultFolderCardView: View {
     public var body: some View {
         let fragment = item.toFragment()
         let resolvedImage: UIImage? = {
-            if let imageName = item.imageName, let uiImage = UIImage(named: imageName) {
+            // Asset-catalog names only: mediaResourceName holds FILE PATHS
+            // (e.g. ".../memo_<id>.m4a"), which must never go through
+            // UIImage(named:) — that only logs "No image named ..." noise.
+            if let imageName = item.imageName, !imageName.contains("/"), let uiImage = UIImage(named: imageName) {
                 return uiImage
             }
             if fragment.type == .video {
@@ -600,7 +603,7 @@ public struct DefaultFolderCardView: View {
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)
                     .clipped()
-            } else if let imageName = item.imageName {
+            } else if let imageName = item.imageName, !imageName.contains("/") {
                 Image(imageName)
                     .resizable()
                     .scaledToFill()

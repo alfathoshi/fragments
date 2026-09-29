@@ -11,7 +11,12 @@ import SwiftData
 @main
 struct fragmentsApp: App {
     @State private var isSplashScreenDone: Bool = false
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
+    // Single source of truth for first-launch navigation. Previously a
+    // parallel `@AppStorage("hasCompletedOnboarding")` flag at this level
+    // drifted from the coordinator's snapshot (sign-out reset one but not
+    // the other), skipping username/permissions. The shared coordinator is
+    // @Observable, so phase/flag changes propagate immediately.
+    @State private var onboardingCoordinator = OnboardingCoordinator.shared
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -136,24 +141,36 @@ struct fragmentsApp: App {
         WindowGroup {
             ZStack {
                 if isSplashScreenDone {
-                    if hasCompletedOnboarding {
-                        ContentView()
-                            .transition(.opacity)
-                    } else {
-                        OnboardingView { result in
-                            if case .success = result {
-                                withAnimation(.easeInOut(duration: 0.45)) {
-                                    hasCompletedOnboarding = true
-                                }
-                            }
+                    switch onboardingCoordinator.phase {
+                    case .splash:
+                        // Transient: splash already finished, coordinator is
+                        // resolving auth/profile. Never re-shows splash.
+                        ZStack {
+                            Color(uiColor: .systemBackground).ignoresSafeArea()
+                            ProgressView()
                         }
                         .transition(.opacity)
+                    case .onboarding:
+                        OnboardingView { result in
+                            onboardingCoordinator.handleSignInResult(result)
+                        }
+                        .transition(.opacity)
+                    case .username:
+                        UsernameSetupView(coordinator: onboardingCoordinator)
+                            .transition(.opacity)
+                    case .permissions:
+                        PermissionsGateView(coordinator: onboardingCoordinator)
+                            .transition(.opacity)
+                    case .main:
+                        ContentView()
+                            .transition(.opacity)
                     }
                 } else {
                     SplashScreenView {
                         withAnimation(.easeInOut(duration: 0.45)) {
                             isSplashScreenDone = true
                         }
+                        onboardingCoordinator.splashFinished()
                     }
                     .transition(.opacity)
                 }

@@ -294,22 +294,44 @@ public actor RemoteMediaService {
         print("🔑 [RemoteMediaService] Resolved signed URL for \(storagePath)")
 
         // 2. Fetch binary via URLSession
-        let (data, response) = try await urlSession.data(from: signedURL)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            print("❌ [RemoteMediaService] Download failed: Non-HTTP response for \(storagePath)")
-            throw RemoteMediaError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            print("❌ [RemoteMediaService] Download HTTP error \(httpResponse.statusCode) for \(storagePath)")
-            throw RemoteMediaError.httpError(statusCode: httpResponse.statusCode)
+        // TEMPORARY diagnostic (no behavior change; never logs URLs/tokens).
+        print("[MediaDebug] Starting Storage download")
+        print("[MediaDebug] path: \(storagePath)")
+        let data: Data
+        let httpStatus: Int
+        do {
+            let (fetchedData, response) = try await urlSession.data(from: signedURL)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[MediaDebug] Storage download FAILED")
+                print("[MediaDebug] error: non-HTTP response")
+                throw RemoteMediaError.invalidResponse
+            }
+            httpStatus = httpResponse.statusCode
+            guard (200...299).contains(httpStatus) else {
+                print("[MediaDebug] Storage download FAILED")
+                print("[MediaDebug] error: HTTP \(httpStatus)")
+                print("[MediaDebug] statusCode: \(httpStatus)")
+                throw RemoteMediaError.httpError(statusCode: httpStatus)
+            }
+            data = fetchedData
+        } catch {
+            if error is RemoteMediaError { throw error } // Already logged above.
+            print("[MediaDebug] Storage download FAILED")
+            print("[MediaDebug] error: \(error)")
+            throw error
         }
 
         guard !data.isEmpty else {
             print("❌ [RemoteMediaService] Download failed: Received empty data for \(storagePath)")
+            print("[MediaDebug] Storage download FAILED")
+            print("[MediaDebug] error: empty data (0 bytes)")
+            print("[MediaDebug] statusCode: \(httpStatus)")
             throw RemoteMediaError.emptyData
         }
+
+        print("[MediaDebug] Storage download SUCCESS")
+        print("[MediaDebug] httpStatus: \(httpStatus)")
+        print("[MediaDebug] bytes: \(data.count)")
 
         // 3. Atomically write to cache (temp file -> move)
         let mediaDir = destinationURL.deletingLastPathComponent()
@@ -332,10 +354,15 @@ public actor RemoteMediaService {
             try fileManager.moveItem(at: tempURL, to: destinationURL)
         } catch {
             print("❌ [RemoteMediaService] Disk write failed for \(destinationURL.lastPathComponent): \(error.localizedDescription)")
+            print("[MediaDebug] Local media save FAILED")
+            print("[MediaDebug] error: \(error)")
             throw RemoteMediaError.diskWriteFailed(error.localizedDescription)
         }
 
         print("✅ [RemoteMediaService] Download SUCCESS: Cached \(data.count) bytes at \(destinationURL.lastPathComponent)")
+        print("[MediaDebug] Local media saved")
+        print("[MediaDebug] localPath: \(destinationURL.path)")
+        print("[MediaDebug] bytes: \(data.count)")
         return destinationURL
     }
 

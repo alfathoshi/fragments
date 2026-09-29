@@ -151,7 +151,7 @@ public struct SharedFragmentDetailView: View {
            FileManager.default.fileExists(atPath: localURL.path) {
             switch fragment.type {
             case .photo:
-                if let uiImage = UIImage(contentsOfFile: localURL.path) {
+                if isDecodableImageFile(localURL), let uiImage = UIImage(contentsOfFile: localURL.path) {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()

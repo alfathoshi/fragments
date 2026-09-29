@@ -28,7 +28,10 @@ public struct ProfileView: View {
     @State private var showCloudKitDebug = false
     @State private var showSignOutAlert = false
     @State private var showDeleteAccountAlert = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String? = nil
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = true
+    @AppStorage("hasCompletedPermissions") private var hasCompletedPermissions: Bool = true
     @State private var supabaseService = SupabaseService.shared
 
     public init(profileManager: ProfileManager = ProfileManager.shared) {
@@ -99,12 +102,24 @@ public struct ProfileView: View {
                 Text("Are you sure you want to sign out of Fragments?")
             }
             .confirmationDialog("Delete Account", isPresented: $showDeleteAccountAlert, titleVisibility: .visible) {
-                Button("Delete Account", role: .destructive) {
+                Button(isDeletingAccount ? "Deleting…" : "Delete Account", role: .destructive) {
                     handleDeleteAccount()
                 }
+                .disabled(isDeletingAccount)
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("Are you sure you want to delete your account? All your local data and cloud fragments will be permanently removed.")
+                Text("Deleting your account permanently removes your account, username, Rooms you own, shared content in those Rooms, uploaded media, and local data. This action cannot be undone.")
+            }
+            .alert(
+                "Account Deletion Failed",
+                isPresented: Binding(
+                    get: { deleteAccountError != nil },
+                    set: { if !$0 { deleteAccountError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(deleteAccountError ?? "An unknown error occurred. Your account and data were kept intact — please try again.")
             }
             .sheet(isPresented: $isEditingProfile) {
                 editProfileSheet
@@ -468,16 +483,89 @@ public struct ProfileView: View {
         Task {
             try? await supabaseService.signOut()
             hasCompletedOnboarding = false
+            hasCompletedPermissions = false
+            // Reset the shared launch coordinator (phase → .onboarding) so a
+            // subsequent sign-in re-resolves username → permissions → main
+            // instead of reusing stale in-memory gating state.
+            OnboardingCoordinator.shared.handleSignOut()
             dismiss()
         }
     }
 
     private func handleDeleteAccount() {
+        // Never run twice; never swallow the real deletion in `try?`.
+        guard !isDeletingAccount else { return }
         triggerHaptic()
+        isDeletingAccount = true
+        deleteAccountError = nil
         Task {
-            try? await supabaseService.signOut()
+            do {
+                // Capture identity BEFORE deletion (session is still valid).
+                let deletedUserID = supabaseService.currentUserID
+                // 1. Server-side permanent deletion. Throws on ANY failure —
+                //    account stays authenticated and local data stays intact.
+                let result = try await supabaseService.deleteAccount()
+                // 2. Local wipe, only after the server confirms success.
+                performLocalAccountWipe(deletedUserID: deletedUserID)
+                if let apple = result.apple, !apple.revoked {
+                    print("ℹ️ [ProfileView] Apple authorization revocation status: \(apple.reason)")
+                }
+            } catch {
+                // Failure: keep everything, surface the error, allow retry.
+                isDeletingAccount = false
+                deleteAccountError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Wipes ALL account-local state after server-confirmed deletion, then
+    /// signs out the (now inert) session and returns to onboarding.
+    private func performLocalAccountWipe(deletedUserID: String?) {
+        // Stop live/collaborative state first (no remote calls inside resets).
+        MomentManager.shared.resetForAccountDeletion()
+        RoomManager.shared.resetForAccountDeletion()
+        try? LocalRoomCache.shared.clearAll()
+        sweepLocalMediaFiles()
+
+        // Identity + profile caches.
+        profileManager.clearAll()
+        CachedUsernameStore.clear(for: deletedUserID)
+        UserIdentityService.shared.clearIdentityCache()
+
+        Task {
+            // The server already deleted everything; the remaining local JWT
+            // is inert (its user no longer exists). Still attempt a clean
+            // sign-out, but never block onboarding on it.
+            do {
+                try await supabaseService.signOut()
+            } catch {
+                print("⚠️ [ProfileView] Post-deletion sign-out failed (session is inert): \(error.localizedDescription)")
+            }
             hasCompletedOnboarding = false
+            hasCompletedPermissions = false
+            OnboardingCoordinator.shared.handleSignOut()
+            isDeletingAccount = false
             dismiss()
+        }
+    }
+
+    /// Best-effort removal of locally captured media (captured photos,
+    /// peer-received files, memo recordings). Server objects are handled
+    /// by the Edge Function; this covers device-only copies.
+    private func sweepLocalMediaFiles() {
+        let fileManager = FileManager.default
+        if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first,
+           let items = try? fileManager.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
+            for url in items where url.lastPathComponent.hasPrefix("IMG_")
+                || url.lastPathComponent.hasPrefix("Peer_") {
+                try? fileManager.removeItem(at: url)
+            }
+        }
+        let tmp = fileManager.temporaryDirectory
+        if let items = try? fileManager.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil) {
+            for url in items where url.lastPathComponent.hasPrefix("memo_") {
+                try? fileManager.removeItem(at: url)
+            }
         }
     }
 

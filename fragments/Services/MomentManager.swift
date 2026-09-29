@@ -79,8 +79,39 @@ final class MomentManager {
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
         setupMultipeerCallbacks()
+        observeRoomMetadataChanges()
         if let context = modelContext {
             loadPersistedData(context: context)
+        }
+    }
+
+    deinit {
+        if let observer = roomMetadataObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Room metadata (name/category/color) for shared moments arrives via
+    /// RoomManager; this observes it to update saved collections + SwiftData.
+    /// Nonisolated storage so `deinit` can deregister (singleton never deinits
+    /// in practice; assignment always happens on the main actor).
+    nonisolated(unsafe) private var roomMetadataObserver: NSObjectProtocol?
+
+    private func observeRoomMetadataChanges() {
+        roomMetadataObserver = NotificationCenter.default.addObserver(
+            forName: .fragmentsRoomMetadataChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let roomID = note.object as? String,
+                   let room = RoomManager.shared.rooms.first(where: { $0.id == roomID }) {
+                    self.applySharedRoomMetadata(room)
+                } else {
+                    self.reconcileSharedMetadataFromRooms()
+                }
+            }
         }
     }
 
@@ -127,6 +158,10 @@ final class MomentManager {
             }
             self.standaloneFragments = Array(validFragments.prefix(Self.maxStandaloneFragments))
         }
+
+        // Repair saved shared moments against known room metadata (covers
+        // relaunch when SwiftData is stale but the room cache is fresh).
+        reconcileSharedMetadataFromRooms()
 
         // Restore active session if a Live Activity is still running
         // (happens when the app was terminated while a moment was recording)
@@ -263,6 +298,113 @@ final class MomentManager {
             Task {
                 try? await RoomManager.shared.updateRoom(room)
             }
+        }
+    }
+
+    /// Updates name/category/color for a saved Moment in local state, SwiftData,
+    /// and the shared Room (which receivers reconcile via room metadata).
+    ///
+    /// Powers Edit Moment (FolderDetailBottomSheet Save). Name falls back to the
+    /// existing name when blank; empty category keeps the existing category.
+    /// Fragments and media are never touched — metadata-only update, so no
+    /// duplicates and no re-uploads.
+    func updateMomentMetadata(id: UUID, roomID: String? = nil, name: String, category: String, color: Color?) {
+        var targetRoomID: String? = roomID
+        var fallbackName: String? = nil
+        var fallbackCategory: String? = nil
+
+        if let index = collections.firstIndex(where: { $0.id == id }) {
+            if targetRoomID == nil { targetRoomID = collections[index].roomID }
+            fallbackName = collections[index].name
+            fallbackCategory = collections[index].category
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedName.isEmpty { collections[index].name = trimmedName }
+            if !category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                collections[index].category = category
+            }
+            collections[index].color = color
+        }
+
+        if let ctx = modelContext {
+            let descriptor = FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == id })
+            if let matching = try? ctx.fetch(descriptor).first {
+                if targetRoomID == nil { targetRoomID = matching.roomID }
+                if fallbackName == nil { fallbackName = matching.name }
+                if fallbackCategory == nil { fallbackCategory = matching.category }
+                let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedName.isEmpty { matching.name = trimmedName }
+                if !category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    matching.category = category
+                }
+                matching.colorRGBAString = color?.toRGBAString()
+                try? ctx.save()
+            }
+        }
+
+        // Sync with RoomManager if it's a collaborative Room (receivers apply
+        // name ← finalTitle, category ← finalCategory, color ← accentColorHex).
+        let resolvedRoomID = targetRoomID ?? (RoomManager.shared.rooms.contains(where: { $0.id == id.uuidString }) ? id.uuidString : nil)
+        if let rID = resolvedRoomID,
+           var room = RoomManager.shared.rooms.first(where: { $0.id == rID })
+               ?? (RoomManager.shared.currentRoom?.id == rID ? RoomManager.shared.currentRoom : nil) {
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalName = trimmedName.isEmpty ? (fallbackName ?? room.finalTitle ?? room.name) : trimmedName
+            room.name = finalName
+            room.finalTitle = finalName
+            let trimmedCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+            room.finalCategory = trimmedCategory.isEmpty ? (fallbackCategory ?? room.finalCategory) : trimmedCategory
+            room.accentColorHex = color?.toRGBAString()
+            Task {
+                try? await RoomManager.shared.updateRoom(room)
+            }
+        }
+    }
+
+    /// Applies authoritative shared-room metadata to locally saved collections
+    /// + SwiftData. Receiver-side half of metadata sync (and relaunch repair):
+    /// only explicit values overwrite — name requires `finalTitle`, category
+    /// requires `finalCategory` (legacy rows carry nil and must not clobber
+    /// good local values); color follows `accentColorHex` (nil = Default theme).
+    /// Returns whether anything changed. Fragments/media untouched.
+    @discardableResult
+    func applySharedRoomMetadata(_ room: Room) -> Bool {
+        var changed = false
+        for i in collections.indices where collections[i].roomID == room.id {
+            if let finalTitle = room.finalTitle, !finalTitle.isEmpty, collections[i].name != finalTitle {
+                collections[i].name = finalTitle
+                changed = true
+            }
+            if let finalCategory = room.finalCategory, !finalCategory.isEmpty, collections[i].category != finalCategory {
+                collections[i].category = finalCategory
+                changed = true
+            }
+            let newColor = room.accentColorHex.map { Color.fromRGBAString($0) }
+            if collections[i].color != newColor {
+                collections[i].color = newColor
+                changed = true
+            }
+        }
+        guard changed else { return false }
+        if let ctx = modelContext {
+            for collection in collections where collection.roomID == room.id {
+                let cid = collection.id
+                if let matching = try? ctx.fetch(FetchDescriptor<SDMoment>(predicate: #Predicate { $0.id == cid })).first {
+                    if let finalTitle = room.finalTitle, !finalTitle.isEmpty { matching.name = finalTitle }
+                    if let finalCategory = room.finalCategory, !finalCategory.isEmpty { matching.category = finalCategory }
+                    matching.colorRGBAString = room.accentColorHex
+                }
+            }
+            try? ctx.save()
+        }
+        return true
+    }
+
+    /// Reconciles all locally saved shared moments against known rooms.
+    /// Called on launch (repairs stale SwiftData after relaunch) and whenever
+    /// room metadata may have changed (realtime/refresh notification).
+    func reconcileSharedMetadataFromRooms() {
+        for room in RoomManager.shared.rooms {
+            applySharedRoomMetadata(room)
         }
     }
 
@@ -532,7 +674,19 @@ final class MomentManager {
                     var hasNew = false
                     for frag in rmFragments {
                         if !updated.contains(where: { $0.id == frag.id }) {
-                            updated.append(frag)
+                            var placed = frag
+                            let resolved = Fragment.resolveCoordinates(
+                                phi: placed.phi,
+                                theta: placed.theta,
+                                radiusFactor: placed.radiusFactor,
+                                selfID: placed.id,
+                                existing: updated,
+                                epsilon: FragmentSphere.overlapEpsilon
+                            )
+                            placed.phi = resolved.phi
+                            placed.theta = resolved.theta
+                            placed.radiusFactor = resolved.radiusFactor
+                            updated.append(placed)
                             hasNew = true
                         }
                     }
@@ -581,16 +735,25 @@ final class MomentManager {
 
     /// Adds a newly captured fragment to the active session (capped at 15 items)
     func addFragment(_ fragment: Fragment) {
+        // TEMPORARY trace (no behavior change).
+        print("[PhotoTrace] MOMENT_MANAGER_ADD_FRAGMENT_CALLED id=\(fragment.id) type=\(fragment.type.rawValue)")
         guard var session = activeSession else { return }
         guard session.fragments.count < MomentSession.maxFragments || session.isShared else { return }
         guard !session.fragments.contains(where: { $0.id == fragment.id }) else { return }
         var newFragment = fragment
-        if newFragment.phi == 0.0 && newFragment.theta == 0.0 {
-            let coords = Fragment.generateScatteredCoordinates(existing: session.fragments)
-            newFragment.phi = coords.phi
-            newFragment.theta = coords.theta
-            newFragment.radiusFactor = coords.radiusFactor
-        }
+        // Stable placement: keep stored coordinates unless unset, default, or
+        // colliding — only genuinely new/colliding fragments are (re)sampled.
+        let resolved = Fragment.resolveCoordinates(
+            phi: newFragment.phi,
+            theta: newFragment.theta,
+            radiusFactor: newFragment.radiusFactor,
+            selfID: newFragment.id,
+            existing: session.fragments,
+            epsilon: FragmentSphere.overlapEpsilon
+        )
+        newFragment.phi = resolved.phi
+        newFragment.theta = resolved.theta
+        newFragment.radiusFactor = resolved.radiusFactor
 
         session.fragments.append(newFragment)
         activeSession = session
@@ -619,8 +782,19 @@ final class MomentManager {
     private func setupMultipeerCallbacks() {
         MultipeerSyncService.shared.onFragmentReceived = { [weak self] sharedFrag in
             guard let self = self, var current = self.activeSession, current.isShared else { return }
-            let frag = sharedFrag.toFragment()
+            var frag = sharedFrag.toFragment()
             if !current.fragments.contains(where: { $0.id == frag.id }) {
+                let resolved = Fragment.resolveCoordinates(
+                    phi: frag.phi,
+                    theta: frag.theta,
+                    radiusFactor: frag.radiusFactor,
+                    selfID: frag.id,
+                    existing: current.fragments,
+                    epsilon: FragmentSphere.overlapEpsilon
+                )
+                frag.phi = resolved.phi
+                frag.theta = resolved.theta
+                frag.radiusFactor = resolved.radiusFactor
                 current.fragments.append(frag)
                 self.activeSession = current
                 self.persistSession(current)
@@ -828,10 +1002,15 @@ final class MomentManager {
     }
 
     private func attachLocalMedia(localURL: URL, fragmentID: String, roomID: String) {
+        // TEMPORARY diagnostic (no behavior change).
+        print("[MediaDebug] Attaching local media")
+        print("[MediaDebug] fragmentID: \(fragmentID)")
+        print("[MediaDebug] localPath: \(localURL.path)")
         guard var current = activeSession, current.isShared else { return }
         guard let targetUUID = UUID(uuidString: fragmentID) else { return }
 
         guard let idx = current.fragments.firstIndex(where: { $0.id == targetUUID }) else {
+            print("[MediaDebug] attach SKIPPED: fragment not in session: \(fragmentID)")
             return
         }
 
@@ -840,6 +1019,11 @@ final class MomentManager {
         self.activeSession = current
         self.persistSession(current)
         print("[Media] UI state updated: \(fragmentID)")
+        print("[MediaDebug] Local media attached")
+        print("[MediaDebug] fragmentID: \(fragmentID)")
+        print("[MediaDebug] mediaResourceName: \(localURL.path)")
+        print("[MediaDebug] UI state published")
+        print("[MediaDebug] fragmentID: \(fragmentID)")
     }
 
     /// Downloads remote media for session fragments that reference a remote
@@ -897,6 +1081,21 @@ final class MomentManager {
             defer { self?.mediaHydrationTasks[key] = nil }
             guard let self else { return }
 
+            // TEMPORARY diagnostic (no behavior change): auth/session/realtime
+            // snapshot to discriminate Xcode-attached vs standalone failures.
+            // Never prints tokens — only presence booleans and the uid RLS uses.
+            let debugUID = SupabaseService.shared.currentUserID
+            print("[MediaDebug] Hydration start fragmentID: \(fragmentID) roomID: \(roomID)")
+            print("[MediaDebug] auth user present: \(debugUID != nil)")
+            print("[MediaDebug] auth uid: \(debugUID ?? "nil")")
+            print("[MediaDebug] supabase session present: \(SupabaseService.shared.session != nil)")
+            print("[MediaDebug] Supabase client initialized: true")
+            print("[MediaDebug] realtime connected: \(SupabaseRealtimeCoordinator.shared.connectionState == .connected)")
+            if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+               let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+                print("[MediaDebug] app version: \(version) build: \(build)")
+            }
+
             // Hydration targets the Supabase path only; other backends keep
             // their own sync engines.
             let isSupabaseRoom: Bool = await MainActor.run {
@@ -919,16 +1118,25 @@ final class MomentManager {
                 }
 
                 // 1. Resolve the media reference.
+                // TEMPORARY diagnostic: keep lookup errors distinct from empty
+                // results — an RLS/auth failure must NOT look like NOT FOUND.
                 if ref == nil {
+                    print("[MediaDebug] Looking up fragment_media")
+                    print("[MediaDebug] fragmentID: \(fragmentID)")
+                    print("[MediaDebug] roomID: \(roomID)")
                     do {
                         if let found = try await SupabaseRoomRepository.shared.fetchFragmentMedia(fragmentID: fragmentID, roomID: roomID) {
                             print("[Media] fragment_media FOUND: \(found.storagePath ?? "?")")
+                            print("[MediaDebug] FOUND storagePath: \(found.storagePath ?? "nil")")
                             ref = found
                         } else {
                             print("[Media] fragment_media NOT FOUND: \(fragmentID)")
+                            print("[MediaDebug] fragment_media NOT FOUND")
                         }
                     } catch {
                         print("[Media] fragment_media lookup FAILED: \(fragmentID): \(error)")
+                        print("[MediaDebug] fragment_media LOOKUP FAILED")
+                        print("[MediaDebug] error: \(error)")
                         lastError = error
                     }
                 }
@@ -958,7 +1166,13 @@ final class MomentManager {
                 }
 
                 // 3. Download via the existing signed-URL pipeline.
+                // TEMPORARY diagnostic (no behavior change).
                 print("[Media] Downloading: \(mediaRef.storagePath ?? "?")")
+                print("[MediaDebug] Creating signed URL")
+                print("[MediaDebug] bucket: moment-media")
+                print("[MediaDebug] path: \(mediaRef.storagePath ?? "nil")")
+                print("[MediaDebug] fragmentID: \(fragmentID)")
+                print("[MediaDebug] roomID: \(roomID)")
                 do {
                     let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: mediaRef, roomID: roomID)
                     let bytes = (try? FileManager.default.attributesOfItem(atPath: downloadedURL.path)[.size] as? Int) ?? -1
@@ -989,10 +1203,30 @@ final class MomentManager {
 
     private func handleRealtimeFragmentCreated(_ sharedFrag: SharedFragment) {
         print("[Realtime] Received fragment: \(sharedFrag.id) type: \(sharedFrag.type.rawValue)")
+        // TEMPORARY diagnostic (no behavior change): expose the receive stage.
+        print("[MediaDebug] Fragment received")
+        print("[MediaDebug] fragmentID: \(sharedFrag.id)")
+        print("[MediaDebug] roomID: \(sharedFrag.roomId)")
+        print("[MediaDebug] fragmentType: \(sharedFrag.type.rawValue)")
+        print("[MediaDebug] mediaReference: \(sharedFrag.mediaReference?.storagePath ?? "nil")")
         guard var current = activeSession, current.isShared else { return }
         guard let targetUUID = UUID(uuidString: sharedFrag.id) else { return }
 
         var domainFrag = sharedFrag.toFragment()
+
+        // Stable placement for incoming remote fragments: resample only when
+        // unset/default/colliding. Stored positions of survivors never change.
+        let createdResolved = Fragment.resolveCoordinates(
+            phi: domainFrag.phi,
+            theta: domainFrag.theta,
+            radiusFactor: domainFrag.radiusFactor,
+            selfID: domainFrag.id,
+            existing: current.fragments,
+            epsilon: FragmentSphere.overlapEpsilon
+        )
+        domainFrag.phi = createdResolved.phi
+        domainFrag.theta = createdResolved.theta
+        domainFrag.radiusFactor = createdResolved.radiusFactor
 
         // Synchronous cache fast paths only. All downloading flows through
         // hydrateFragmentMedia below (bounded retry, deduplicated), so no
@@ -1058,7 +1292,7 @@ final class MomentManager {
         guard var current = activeSession, current.isShared else { return }
         guard let targetUUID = UUID(uuidString: sharedFrag.id) else { return }
 
-        let domainFrag = sharedFrag.toFragment()
+        var domainFrag = sharedFrag.toFragment()
 
         if let existingIdx = current.fragments.firstIndex(where: { $0.id == targetUUID }) {
             print("✏️ [MomentManager] Realtime UPDATE: Updated existing fragment: \(sharedFrag.id) in room: \(sharedFrag.roomId)")
@@ -1069,9 +1303,7 @@ final class MomentManager {
             existing.location = domainFrag.location
             existing.duration = domainFrag.duration
             if !domainFrag.audioWaveform.isEmpty { existing.audioWaveform = domainFrag.audioWaveform }
-            existing.phi = domainFrag.phi
-            existing.theta = domainFrag.theta
-            existing.radiusFactor = domainFrag.radiusFactor
+            // Positions are session-stable: remote updates never move nodes.
             existing.gradientColors = domainFrag.gradientColors
             if existing.mediaResourceName == nil && domainFrag.mediaResourceName != nil {
                 existing.mediaResourceName = domainFrag.mediaResourceName
@@ -1079,6 +1311,17 @@ final class MomentManager {
             current.fragments[existingIdx] = existing
         } else {
             print("📥 [MomentManager] Realtime UPDATE: Inserted missing fragment: \(sharedFrag.id) in room: \(sharedFrag.roomId)")
+            let resolved = Fragment.resolveCoordinates(
+                phi: domainFrag.phi,
+                theta: domainFrag.theta,
+                radiusFactor: domainFrag.radiusFactor,
+                selfID: domainFrag.id,
+                existing: current.fragments,
+                epsilon: FragmentSphere.overlapEpsilon
+            )
+            domainFrag.phi = resolved.phi
+            domainFrag.theta = resolved.theta
+            domainFrag.radiusFactor = resolved.radiusFactor
             current.fragments.append(domainFrag)
         }
 
@@ -1452,6 +1695,50 @@ final class MomentManager {
     /// Removes the persisted session entry from UserDefaults.
     private func clearPersistedSession() {
         UserDefaults.standard.removeObject(forKey: kPersistedSessionKey)
+    }
+
+    /// Resets ALL local Moment state for permanent account deletion.
+    /// Local-only: performs no remote calls (the server already deleted
+    /// everything). Purges SwiftData moments/fragments when a model context
+    /// is available. Sign-out must NOT call this.
+    func resetForAccountDeletion() {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+            activeSession = nil
+            showEndMomentSheet = false
+        }
+        collections = []
+        standaloneFragments = []
+        recentlySavedMoment = nil
+        hasLeftSession = false
+        clearPersistedSession()
+        endLiveActivity()
+        stopRemoteSyncObserver()
+        stopSupabaseRealtimeObserver()
+        cancelMediaHydration()
+        MultipeerSyncService.shared.stop()
+        MultipeerSyncService.shared.onFragmentReceived = nil
+        MultipeerSyncService.shared.onMemberReceived = nil
+        MultipeerSyncService.shared.onSyncRequest = nil
+        MultipeerSyncService.shared.onSessionEnded = nil
+        MultipeerSyncService.shared.onSessionStartDateReceived = nil
+        purgeSwiftData()
+    }
+
+    /// Deletes every locally stored moment and fragment (SDMoment cascades
+    /// to SDMomentItem via its delete rule).
+    private func purgeSwiftData() {
+        guard let ctx = modelContext else { return }
+        do {
+            for moment in try ctx.fetch(FetchDescriptor<SDMoment>()) {
+                ctx.delete(moment)
+            }
+            for fragment in try ctx.fetch(FetchDescriptor<SDFragment>()) {
+                ctx.delete(fragment)
+            }
+            try ctx.save()
+        } catch {
+            print("⚠️ [MomentManager] Local data purge failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Live Activity Helpers

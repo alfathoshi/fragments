@@ -20,6 +20,7 @@ public enum SupabaseRoomError: LocalizedError, Sendable, Equatable {
     case storageFailure(String)
     case databaseFailure(String)
     case partialSyncFailure(fragmentID: String, storagePath: String, reason: String)
+    case schemaMismatch(String)
 
     public var errorDescription: String? {
         switch self {
@@ -41,6 +42,8 @@ public enum SupabaseRoomError: LocalizedError, Sendable, Equatable {
             return "Database operation error: \(reason)"
         case .partialSyncFailure(let fragmentID, _, let reason):
             return "Partial sync failure for fragment \(fragmentID): \(reason)"
+        case .schemaMismatch(let reason):
+            return "Backend schema mismatch: \(reason)"
         }
     }
 }
@@ -231,17 +234,38 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
         }
 
         do {
-            let members: [DatabaseRoomMember] = try await client
+            return try await fetchRoomMemberRows(roomUUID: roomUUID).map { $0.toDomain() }
+        } catch {
+            throw mapError(error)
+        }
+    }
+
+    /// Member-list select that prefers `profiles.username` and falls back to
+    /// the legacy column set when the backend predates the username migration.
+    private func fetchRoomMemberRows(roomUUID: UUID) async throws -> [DatabaseRoomMember] {
+        let modern = "id, room_id, user_id, role, joined_at, profiles(username, display_name, avatar_storage_path)"
+        let legacy = "id, room_id, user_id, role, joined_at, profiles(display_name, avatar_storage_path)"
+        let columns = Self.isUsernameColumnSupported ? modern : legacy
+        do {
+            return try await client
                 .from("room_members")
-                .select("id, room_id, user_id, role, joined_at, profiles(display_name, avatar_storage_path)")
+                .select(columns)
                 .eq("room_id", value: roomUUID)
                 .order("joined_at", ascending: true)
                 .execute()
                 .value
-
-            return members.map { $0.toDomain() }
         } catch {
-            throw mapError(error)
+            guard Self.isUsernameColumnSupported, Self.isMissingUsernameColumn(error) else {
+                throw error
+            }
+            Self.isUsernameColumnSupported = false
+            return try await client
+                .from("room_members")
+                .select(legacy)
+                .eq("room_id", value: roomUUID)
+                .order("joined_at", ascending: true)
+                .execute()
+                .value
         }
     }
 
@@ -295,24 +319,171 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
     }
 
     /// Fetches the profile display name and avatar path for a specific user ID.
+    /// Prefers the unique `username` when the backend supports it.
     public func fetchUserProfile(userID: UUID) async throws -> (displayName: String, avatarStoragePath: String?) {
         _ = try await currentAuthenticatedUser()
         do {
+            let columns = Self.isUsernameColumnSupported
+                ? "username, display_name, avatar_storage_path"
+                : "display_name, avatar_storage_path"
             let result: [DatabaseMemberProfile] = try await client
                 .from("profiles")
-                .select("display_name, avatar_storage_path")
+                .select(columns)
                 .eq("id", value: userID)
                 .limit(1)
                 .execute()
                 .value
 
-            if let first = result.first, let name = first.display_name, !name.isEmpty {
-                return (name, first.avatar_storage_path)
+            if let first = result.first {
+                let name = Self.resolvedMemberDisplayName(profileName: first.username)
+                if !isUnresolvedName(name) {
+                    return (name, first.avatar_storage_path)
+                }
+                if let fallback = first.display_name, !fallback.isEmpty {
+                    return (fallback, first.avatar_storage_path)
+                }
             }
             return ("Unknown", nil)
         } catch {
+            if Self.isUsernameColumnSupported, Self.isMissingUsernameColumn(error) {
+                Self.isUsernameColumnSupported = false
+                return try await fetchUserProfile(userID: userID)
+            }
             throw mapError(error)
         }
+    }
+
+    private func isUnresolvedName(_ name: String) -> Bool {
+        RoomMember.isUnresolvedDisplayName(name)
+    }
+
+    // MARK: - Username (unique backend identity)
+
+    private static let usernameFlagLock = NSLock()
+    private static var _isUsernameColumnSupported: Bool = true
+
+    /// Whether the backend `profiles` table has the `username` column.
+    /// Auto-detected: the first missing-column error flips it off so legacy
+    /// backends keep working on `display_name` alone.
+    static var isUsernameColumnSupported: Bool {
+        get { usernameFlagLock.withLock { _isUsernameColumnSupported } }
+        set { usernameFlagLock.withLock { _isUsernameColumnSupported = newValue } }
+    }
+
+    /// Detects PostgREST "unknown column" failures for `username`
+    /// (PGRST204 schema-cache errors), as opposed to real query failures.
+    static func isMissingUsernameColumn(_ error: Error) -> Bool {
+        let desc = error.localizedDescription.lowercased()
+        guard desc.contains("username") else { return false }
+        return desc.contains("pgrst204")
+            || desc.contains("could not find")
+            || desc.contains("column")
+            || desc.contains("schema cache")
+    }
+
+    /// Fetches the current user's own profile row (username + display name).
+    /// Throws `.schemaMismatch` when the backend predates the username migration.
+    public func fetchOwnProfile() async throws -> DatabaseOwnProfile {
+        let user = try await currentAuthenticatedUser()
+        do {
+            let rows: [DatabaseOwnProfile] = try await client
+                .from("profiles")
+                .select("id, username, display_name")
+                .eq("id", value: user.id)
+                .limit(1)
+                .execute()
+                .value
+            if let first = rows.first {
+                return first
+            }
+            return DatabaseOwnProfile(id: user.id, username: nil, display_name: nil)
+        } catch {
+            if Self.isMissingUsernameColumn(error) {
+                Self.isUsernameColumnSupported = false
+                throw SupabaseRoomError.schemaMismatch("profiles.username is unavailable; run the username migration.")
+            }
+            throw mapError(error)
+        }
+    }
+
+    /// UX-only availability hint. Returns true when the name appears free OR
+    /// when the check itself cannot run (the authoritative decision always
+    /// happens server-side at save time via the unique constraint).
+    public func isUsernameAvailable(_ normalized: String) async throws -> Bool {
+        _ = try await currentAuthenticatedUser()
+        guard UsernameValidator.isValid(normalized) else {
+            throw SupabaseRoomError.validationFailure(UsernameValidator.friendlyMessage(for: normalized))
+        }
+        struct AvailabilityParams: Encodable, Sendable {
+            let p_username: String
+        }
+        do {
+            let available: Bool = try await client
+                .rpc("is_username_available", params: AvailabilityParams(p_username: normalized))
+                .execute()
+                .value
+            return available
+        } catch {
+            // RPC missing (pre-migration backend): fall back to a direct lookup.
+            // If even that fails (e.g. RLS), return true and let the save decide.
+            if let rows: [DatabaseOwnProfile] = try? await client
+                .from("profiles")
+                .select("id")
+                .eq("username", value: normalized)
+                .limit(1)
+                .execute()
+                .value {
+                return rows.isEmpty
+            }
+            return true
+        }
+    }
+
+    /// Claims a username for the current user. Normalizes + validates locally,
+    /// then upserts `{ id, username }`. A conflicting upsert surfaces HTTP 409
+    /// from the unique index and is mapped to `.duplicate` — nobody is ever
+    /// overwritten. Returns the normalized username. Caches it per user.
+    @discardableResult
+    public func claimUsername(_ raw: String) async throws -> String {
+        let user = try await currentAuthenticatedUser()
+        let normalized = UsernameValidator.normalize(raw)
+        guard UsernameValidator.isValid(normalized) else {
+            throw SupabaseRoomError.validationFailure(UsernameValidator.friendlyMessage(for: raw))
+        }
+        struct ClaimUsernameDTO: Encodable, Sendable {
+            let id: UUID
+            let username: String
+        }
+        do {
+            try await client
+                .from("profiles")
+                .upsert(ClaimUsernameDTO(id: user.id, username: normalized))
+                .execute()
+            CachedUsernameStore.save(normalized, for: user.id.uuidString)
+            return normalized
+        } catch {
+            if isDuplicateKeyError(error) || isConflictError(error) {
+                throw SupabaseRoomError.duplicate("Username is already taken.")
+            }
+            if Self.isMissingUsernameColumn(error) {
+                Self.isUsernameColumnSupported = false
+                throw SupabaseRoomError.schemaMismatch("profiles.username is unavailable; run the username migration.")
+            }
+            throw mapError(error)
+        }
+    }
+
+    /// Detects HTTP 409 / unique-violation failures that message sniffing misses.
+    private func isConflictError(_ error: Error) -> Bool {
+        let desc = error.localizedDescription
+        if desc.contains("409") || desc.lowercased().contains("conflict") {
+            return true
+        }
+        if let postgrestError = error as? PostgrestError {
+            let code = postgrestError.code ?? ""
+            return code == "409" || code == "23505"
+        }
+        return false
     }
 
     // MARK: - Fragment Media Lookup (receiver hydration)
@@ -462,18 +633,21 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
 
     /// High-level orchestration for creating a fragment and attaching its media if present.
     ///
-    /// Sender ordering (P1): media bytes are uploaded and the `fragment_media`
-    /// row is inserted BEFORE the `shared_fragments` row, so a received fragment
-    /// row implies its media metadata/object already exists. This shrinks (but
-    /// does not eliminate — receivers still retry) the sender-side race where
-    /// the fragment row was visible seconds before its media row.
-    /// Rollback/cleanup is preserved: if the fragment insert fails with a
-    /// genuine error, the just-written media row and storage object are removed.
-    /// Duplicate/collision outcomes mean the row already exists and is owned
-    /// correctly (or belongs to someone else) — those are rethrown untouched.
+    /// Valid write order (FK (fragment_id, room_id) → shared_fragments(id, room_id)):
+    /// 1. Upload media bytes to Storage (no DB writes).
+    /// 2. INSERT the parent `shared_fragments` row.
+    /// 3. INSERT the child `fragment_media` row.
+    /// A received fragment row therefore always implies its media metadata and
+    /// object already exist. Rollback is preserved at every step: parent-insert
+    /// failure removes the storage object; child-insert failure deletes the
+    /// parent row (CASCADE removes any partial child row) and the object.
+    /// Duplicate/collision outcomes mean the conflicting row is not ours and
+    /// are rethrown without touching remote state.
     public func createFragmentWithMedia(_ fragment: SharedFragment) async throws -> SharedFragment {
+        // TEMPORARY trace (no behavior change; no image data logged).
+        print("[PhotoTrace] REPOSITORY_CREATE_FRAGMENT_WITH_MEDIA_CALLED id=\(fragment.id) type=\(fragment.type.rawValue) hasLocalURL=\(fragment.mediaReference?.localFileURL != nil)")
         // P1: photo/video/audio require a local media file. Notes legitimately
-        // have none. Previously a nil localURL silently returned success,
+        // have none. A nil localURL previously returned silent success,
         // producing server fragment rows with no possible media.
         if fragment.type != .note, fragment.mediaReference?.localFileURL == nil {
             throw SupabaseRoomError.validationFailure(
@@ -485,61 +659,79 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
             return try await createFragment(fragment)
         }
 
-        // 1. Upload bytes + insert fragment_media row first.
-        let mediaRef = try await createFragmentMedia(
+        // 1. Upload bytes first (no DB writes yet).
+        let upload = try await uploadMediaObject(
             fragmentID: fragment.id,
             roomID: fragment.roomId,
             localFileURL: localURL
         )
 
-        // 2. Insert the fragment row referencing it.
+        // 2. INSERT the parent shared_fragments row.
+        let created: SharedFragment
         do {
-            let created = try await createFragment(fragment)
+            created = try await createFragment(fragment)
+        } catch {
+            if case SupabaseRoomError.duplicate = error {
+                throw error
+            }
+            if case SupabaseRoomError.validationFailure = error {
+                throw error
+            }
+            // Genuine parent-insert failure: no rows exist yet, so only the
+            // storage object needs cleanup (best effort).
+            _ = try? await client.storage
+                .from(Self.mediaBucketName)
+                .remove(paths: [upload.storagePath])
+            throw error
+        }
+
+        // 3. INSERT the child fragment_media row (parent now exists).
+        do {
+            let mediaRef = try await insertFragmentMediaRow(
+                fragmentID: fragment.id,
+                roomID: fragment.roomId,
+                localFileURL: localURL,
+                storagePath: upload.storagePath,
+                resolvedExt: upload.resolvedExt,
+                mimeType: upload.mimeType,
+                byteCount: upload.byteCount
+            )
             var updated = created
             updated.mediaReference = mediaRef
             return updated
         } catch {
             if case SupabaseRoomError.duplicate = error {
-                // Fragment ID collision with another user's row (determined
-                // inside createFragment) — not ours; do not touch remote state.
                 throw error
             }
             if case SupabaseRoomError.validationFailure = error {
-                // Author/room collision determined inside createFragment — the
-                // conflicting row is not ours; do not touch remote state.
                 throw error
             }
-            // Genuine failure after media was written: roll back our media row
-            // and storage object (best effort), then propagate.
-            if let fragmentUUID = UUID(uuidString: fragment.id),
-               let roomUUID = UUID(uuidString: fragment.roomId) {
-                try? await client
-                    .from("fragment_media")
-                    .delete()
-                    .eq("fragment_id", value: fragmentUUID)
-                    .eq("room_id", value: roomUUID)
-                    .execute()
-            }
-            if let storagePath = mediaRef.storagePath {
-                _ = try? await client.storage
-                    .from(Self.mediaBucketName)
-                    .remove(paths: [storagePath])
-            }
+            // Genuine child-insert failure: delete the parent row we just
+            // created (ON DELETE CASCADE removes any partial child row) and
+            // the storage object, then propagate.
+            try? await deleteFragment(fragmentID: fragment.id, roomID: fragment.roomId)
+            _ = try? await client.storage
+                .from(Self.mediaBucketName)
+                .remove(paths: [upload.storagePath])
             throw error
         }
     }
 
     // MARK: - Media Upload
 
-    public func createFragmentMedia(
+    /// Uploads raw media bytes to the private bucket and returns the resolved
+    /// storage coordinates. Performs NO database writes, so it is safe to run
+    /// before any table INSERT (in particular before the parent
+    /// `shared_fragments` row that `fragment_media` references via
+    /// FK (fragment_id, room_id)).
+    private func uploadMediaObject(
         fragmentID: String,
         roomID: String,
         localFileURL: URL
-    ) async throws -> SharedMediaReference {
+    ) async throws -> (storagePath: String, resolvedExt: String, mimeType: String, byteCount: Int) {
         _ = try await currentAuthenticatedUser()
 
-        guard let fragmentUUID = UUID(uuidString: fragmentID),
-              let roomUUID = UUID(uuidString: roomID) else {
+        guard UUID(uuidString: fragmentID) != nil, UUID(uuidString: roomID) != nil else {
             throw SupabaseRoomError.validationFailure("Invalid Fragment or Room UUID format.")
         }
 
@@ -559,7 +751,6 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
         let mimeType = mimeTypeForExtension(resolvedExt)
         let deterministicPath = "rooms/\(roomID)/fragments/\(fragmentID).\(resolvedExt)"
 
-        // 1. Upload media binary to private bucket using deterministic path
         do {
             _ = try await client.storage
                 .from(Self.mediaBucketName)
@@ -572,14 +763,36 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
             throw SupabaseRoomError.storageFailure("Storage upload failed: \(error.localizedDescription)")
         }
 
-        // 2. Persist media metadata in PostgreSQL fragment_media table
+        return (deterministicPath, resolvedExt, mimeType, fileData.count)
+    }
+
+    /// Inserts the `fragment_media` child row. The parent `shared_fragments`
+    /// row MUST already exist (FK (fragment_id, room_id)). Duplicate inserts
+    /// for the same deterministic path resolve idempotently to the existing
+    /// row. Throws without side effects on failure — the caller owns rollback.
+    private func insertFragmentMediaRow(
+        fragmentID: String,
+        roomID: String,
+        localFileURL: URL,
+        storagePath: String,
+        resolvedExt: String,
+        mimeType: String,
+        byteCount: Int
+    ) async throws -> SharedMediaReference {
+        _ = try await currentAuthenticatedUser()
+
+        guard let fragmentUUID = UUID(uuidString: fragmentID),
+              let roomUUID = UUID(uuidString: roomID) else {
+            throw SupabaseRoomError.validationFailure("Invalid Fragment or Room UUID format.")
+        }
+
         let mediaDTO = InsertFragmentMediaDTO(
             id: UUID(),
             fragment_id: fragmentUUID,
             room_id: roomUUID,
-            storage_path: deterministicPath,
+            storage_path: storagePath,
             file_extension: resolvedExt,
-            file_size: Int64(fileData.count),
+            file_size: Int64(byteCount),
             mime_type: mimeType,
             created_at: ISO8601DateFormatter().string(from: Date())
         )
@@ -599,43 +812,67 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
                     .execute()
                     .value
 
-                if let first = existing.first, first.room_id == roomUUID, first.storage_path == deterministicPath {
+                if let first = existing.first, first.room_id == roomUUID, first.storage_path == storagePath {
                     return first.toMediaReference(localURL: localFileURL)
                 }
             }
-
-            // Cleanup uploaded storage binary to avoid leaving orphaned files
-            _ = try? await client.storage
-                .from(Self.mediaBucketName)
-                .remove(paths: [deterministicPath])
-
-            // Media exists in storage but DB metadata failed -> partial sync error for deterministic retry
-            throw SupabaseRoomError.partialSyncFailure(
-                fragmentID: fragmentID,
-                storagePath: deterministicPath,
-                reason: error.localizedDescription
-            )
+            throw error
         }
 
         return SharedMediaReference(
-            assetKey: deterministicPath,
-            storagePath: deterministicPath,
+            assetKey: storagePath,
+            storagePath: storagePath,
             localFileURL: localFileURL,
             remoteURL: nil,
             fileExtension: resolvedExt,
-            fileSize: Int64(fileData.count),
+            fileSize: Int64(byteCount),
             mimeType: mimeType
         )
+    }
+
+    public func createFragmentMedia(
+        fragmentID: String,
+        roomID: String,
+        localFileURL: URL
+    ) async throws -> SharedMediaReference {
+        let upload = try await uploadMediaObject(
+            fragmentID: fragmentID,
+            roomID: roomID,
+            localFileURL: localFileURL
+        )
+        do {
+            return try await insertFragmentMediaRow(
+                fragmentID: fragmentID,
+                roomID: roomID,
+                localFileURL: localFileURL,
+                storagePath: upload.storagePath,
+                resolvedExt: upload.resolvedExt,
+                mimeType: upload.mimeType,
+                byteCount: upload.byteCount
+            )
+        } catch {
+            // Cleanup uploaded storage binary to avoid leaving orphaned files
+            _ = try? await client.storage
+                .from(Self.mediaBucketName)
+                .remove(paths: [upload.storagePath])
+            throw error
+        }
     }
 
     public func createSignedMediaURL(storagePath: String, expiresIn: Int = 3600) async throws -> URL {
         _ = try await currentAuthenticatedUser()
 
         do {
-            return try await client.storage
+            // TEMPORARY diagnostic: confirm creation without printing the URL
+            // itself (it embeds a credential/token).
+            let signedURL = try await client.storage
                 .from(Self.mediaBucketName)
                 .createSignedURL(path: storagePath, expiresIn: expiresIn)
+            print("[MediaDebug] Signed URL CREATED")
+            return signedURL
         } catch {
+            print("[MediaDebug] SIGNED URL FAILED")
+            print("[MediaDebug] error: \(error)")
             throw mapError(error)
         }
     }
@@ -880,8 +1117,18 @@ struct DatabaseRoom: Decodable, Sendable {
 }
 
 struct DatabaseMemberProfile: Decodable, Sendable {
+    let username: String?
     let display_name: String?
     let avatar_storage_path: String?
+}
+
+/// Own-profile row: stable unique `username` plus legacy free-text `display_name`.
+/// USERNAME (unique, backend-persisted) is the collaborative identity;
+/// DISPLAY NAME (free text) remains optional profile metadata and coexists.
+public struct DatabaseOwnProfile: Decodable, Sendable {
+    public let id: UUID
+    public let username: String?
+    public let display_name: String?
 }
 
 struct DatabaseRoomMember: Decodable, Sendable {
@@ -912,7 +1159,10 @@ struct DatabaseRoomMember: Decodable, Sendable {
             id: id.uuidString,
             roomId: room_id.uuidString,
             userId: user_id.uuidString,
-            displayName: SupabaseRoomRepository.resolvedMemberDisplayName(profileName: profiles?.display_name),
+            displayName: SupabaseRoomRepository.resolvedMemberDisplayName(
+                profileName: profiles?.username,
+                fallbackLocalName: profiles?.display_name
+            ),
             role: memberRole,
             joinedAt: SupabaseRoomRepository.parseISO8601(joined_at),
             avatarAssetURL: avatarURL

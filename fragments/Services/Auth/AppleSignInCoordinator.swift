@@ -16,6 +16,7 @@ public enum AppleSignInError: LocalizedError, Equatable {
     case missingCredential
     case missingIdentityToken
     case invalidIdentityToken
+    case missingAuthorizationCode
     case missingNonceState
     case userCancelled
     case authorizationFailed(String)
@@ -29,6 +30,8 @@ public enum AppleSignInError: LocalizedError, Equatable {
             return "Apple Sign In did not return an identity token."
         case .invalidIdentityToken:
             return "Apple identity token could not be parsed as a UTF-8 string."
+        case .missingAuthorizationCode:
+            return "Apple Sign In did not return an authorization code."
         case .missingNonceState:
             return "Authentication state was lost. Please try again."
         case .userCancelled:
@@ -168,6 +171,14 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
             return
         }
 
+        // The authorization code is short-lived and single-use. It is NOT a
+        // session credential: it is forwarded (once, fire-and-forget) so the
+        // server can exchange it for an Apple refresh token used ONLY at
+        // account-deletion time for authorization revocation. It is never
+        // persisted on device and never logged.
+        let authorizationCodeString: String? = appleIDCredential.authorizationCode
+            .flatMap { String(data: $0, encoding: .utf8) }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -175,6 +186,10 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
                     idToken: idTokenString,
                     nonce: rawNonce
                 )
+                // Best-effort credential linking; must never fail sign-in.
+                if let code = authorizationCodeString, !code.isEmpty {
+                    await SupabaseService.shared.linkAppleAuthorizationCode(code)
+                }
                 self.finish(with: .success(session))
             } catch {
                 self.finish(with: .failure(AppleSignInError.supabaseAuthFailed(error.localizedDescription)))

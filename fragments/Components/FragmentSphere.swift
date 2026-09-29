@@ -83,6 +83,34 @@ public struct FragmentSphere: View {
     }
 
     // MARK: - Spherical Fibonacci Scattering Engine
+
+    /// Angular-distance epsilon below which two nodes are considered overlapping.
+    /// Shared with the model-layer generator so creation-time spacing and the
+    /// render-time safety net agree on what "too close" means.
+    public static let overlapEpsilon: Double = 0.06
+
+    /// Deterministic fallback slot for a fragment whose stored coordinates
+    /// collide, derived ONLY from its id (never array index/count) so adding
+    /// or removing other fragments cannot move it. Nudges by the golden angle
+    /// until clear of already-placed nodes (bounded attempts).
+    public static func stableScatterSlot(id: UUID, occupied: [(phi: Double, theta: Double)]) -> (phi: Double, theta: Double, radiusFactor: Double) {
+        let goldenAngle = 2.39996323
+        let hash = UInt64(bitPattern: Int64(id.hashValue))
+        let basePhi = (Double(hash % 1000) / 1000.0 - 0.5) * 0.9
+        let baseTheta = Double((hash / 1000) % 6283) / 1000.0
+        var phi = basePhi
+        var theta = baseTheta
+        for attempt in 0..<16 {
+            let collides = occupied.contains {
+                abs($0.phi - phi) < overlapEpsilon && abs($0.theta - theta) < overlapEpsilon
+            }
+            if !collides {
+                return (phi: phi, theta: theta, radiusFactor: 0.98 + Double(attempt % 4) * 0.025)
+            }
+            theta = (theta + goldenAngle).truncatingRemainder(dividingBy: 2.0 * .pi)
+        }
+        return (phi: phi, theta: theta, radiusFactor: 1.0)
+    }
     public static func fibonacciCoordinates(count: Int, index: Int, seed: UUID? = nil) -> (phi: Double, theta: Double, radiusFactor: Double) {
         guard count > 1 else {
             return (phi: 0.08, theta: 0.35, radiusFactor: 1.02)
@@ -109,32 +137,29 @@ public struct FragmentSphere: View {
         let unique = fragments.filter { seen.insert($0.id).inserted }
         guard unique.count > 1 else { return unique }
 
-        // Check if fragments have stacked coordinates (e.g. default (0.08, 0.35) or collisions)
-        var hasOverlap = false
-        for i in 0..<unique.count {
-            for j in (i + 1)..<unique.count {
-                let dPhi = abs(unique[i].phi - unique[j].phi)
-                let dTheta = abs(unique[i].theta - unique[j].theta)
-                if dPhi < 0.06 && dTheta < 0.06 {
-                    hasOverlap = true
-                    break
-                }
+        // Safety net only: stored coordinates are already spaced at creation
+        // time (see resolveFragmentCoordinates). If any pair still collides,
+        // scatter ONLY the later colliding nodes via id-derived stable slots —
+        // never remap the whole sphere by index/count, so existing nodes stay
+        // put when fragments are added, removed, hydrated, or re-rendered.
+        var kept: [Fragment] = []
+        var occupied: [(phi: Double, theta: Double)] = []
+        for frag in unique {
+            var candidate = frag
+            let collides = occupied.contains {
+                abs($0.phi - candidate.phi) < Self.overlapEpsilon
+                    && abs($0.theta - candidate.theta) < Self.overlapEpsilon
             }
-            if hasOverlap { break }
-        }
-
-        if hasOverlap {
-            return unique.enumerated().map { index, frag in
-                var scattered = frag
-                let coords = Self.fibonacciCoordinates(count: unique.count, index: index, seed: frag.id)
-                scattered.phi = coords.phi
-                scattered.theta = coords.theta
-                scattered.radiusFactor = coords.radiusFactor
-                return scattered
+            if collides {
+                let slot = Self.stableScatterSlot(id: frag.id, occupied: occupied)
+                candidate.phi = slot.phi
+                candidate.theta = slot.theta
+                candidate.radiusFactor = slot.radiusFactor
             }
+            occupied.append((candidate.phi, candidate.theta))
+            kept.append(candidate)
         }
-
-        return unique
+        return kept
     }
 
     public var body: some View {

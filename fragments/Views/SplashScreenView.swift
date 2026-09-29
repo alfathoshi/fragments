@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import AVFoundation
 
 public struct SplashScreenView: View {
     public var onFinished: (() -> Void)? = nil
@@ -14,11 +13,6 @@ public struct SplashScreenView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var scale: CGFloat = 0.85
     @State private var opacity: Double = 0.0
-    @State private var statusText: String = "Initializing..."
-    @State private var showPermissionPills: Bool = false
-    @State private var isCameraGranted: Bool = false
-    @State private var isMicGranted: Bool = false
-    @State private var isLocationGranted: Bool = false
 
     public init(onFinished: (() -> Void)? = nil) {
         self.onFinished = onFinished
@@ -61,82 +55,14 @@ public struct SplashScreenView: View {
                 opacity = 1.0
             }
 
+            // Branding delay only. Permission prompts were removed from launch:
+            // they now run sequentially in PermissionsGateView after username
+            // setup. No system prompt may fire before that gate.
             Task {
-                await requestAllPermissions()
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                onFinished?()
             }
         }
-    }
-
-    private func permissionBadge(title: String, icon: String, isGranted: Bool) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: isGranted ? "checkmark.circle.fill" : icon)
-                .font(.system(size: 11, weight: .bold))
-            Text(title)
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-        }
-        .foregroundStyle(isGranted ? Color.green : Color.secondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            (isGranted ? Color.green.opacity(0.14) : Color.primary.opacity(0.06)),
-            in: Capsule()
-        )
-    }
-
-    @MainActor
-    private func requestAllPermissions() async {
-        try? await Task.sleep(nanoseconds: 350_000_000)
-
-        withAnimation(.easeInOut(duration: 0.25)) {
-            showPermissionPills = true
-            statusText = "Checking permissions..."
-        }
-
-        // 1. Camera Permission
-        #if targetEnvironment(simulator)
-        isCameraGranted = true
-        #else
-        let camStatus = AVCaptureDevice.authorizationStatus(for: .video)
-        if camStatus == .authorized {
-            isCameraGranted = true
-        } else if camStatus == .notDetermined {
-            statusText = "Requesting Camera Access..."
-            isCameraGranted = await AVCaptureDevice.requestAccess(for: .video)
-        }
-        #endif
-
-        try? await Task.sleep(nanoseconds: 200_000_000)
-
-        // 2. Microphone Permission
-        #if targetEnvironment(simulator)
-        isMicGranted = true
-        #else
-        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        if micStatus == .authorized {
-            isMicGranted = true
-        } else if micStatus == .notDetermined {
-            statusText = "Requesting Microphone Access..."
-            isMicGranted = await AVCaptureDevice.requestAccess(for: .audio)
-        }
-        #endif
-
-        try? await Task.sleep(nanoseconds: 200_000_000)
-
-        // 3. Location Permission
-        statusText = "Requesting Location Access..."
-        #if !targetEnvironment(simulator)
-        LocationManager.shared.requestLocation()
-        #endif
-        let locStatus = LocationManager.shared.authorizationStatus
-        isLocationGranted = (locStatus == .authorizedWhenInUse || locStatus == .authorizedAlways)
-
-        withAnimation {
-            statusText = "Ready!"
-        }
-
-        try? await Task.sleep(nanoseconds: 400_000_000)
-
-        onFinished?()
     }
 }
 

@@ -59,6 +59,21 @@ public final class ProfileManager {
         }
     }
 
+    /// One-way sync of the backend username (`public.profiles.username`)
+    /// into the local display cache (`signature`).
+    ///
+    /// The backend row is the source of truth: callers must invoke this after
+    /// `claimUsername()` succeeds and whenever `fetchOwnProfile()` returns a
+    /// username (e.g. returning user, reinstall). This intentionally does NOT
+    /// touch `display_name` and performs no Supabase writes — unlike
+    /// `updateSignature`, which manages the legacy free-text signature.
+    public func syncUsername(_ username: String) {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        self.signature = trimmed
+        UserDefaults.standard.set(trimmed, forKey: signatureKey)
+    }
+
     public func updateSignature(_ newSignature: String) {
         let trimmed = newSignature.trimmingCharacters(in: .whitespacesAndNewlines)
         self.signature = trimmed
@@ -80,6 +95,15 @@ public final class ProfileManager {
     public func updateAvatar(image: UIImage, data: Data) {
         self.avatarImage = image
         try? data.write(to: avatarFileURL)
+    }
+
+    /// Removes all account-specific local profile state (username/signature
+    /// cache + avatar file). Used ONLY by permanent account deletion —
+    /// sign-out preserves local profile data.
+    public func clearAll() {
+        self.signature = ""
+        UserDefaults.standard.removeObject(forKey: signatureKey)
+        clearAvatar()
     }
 
     public func clearAvatar() {

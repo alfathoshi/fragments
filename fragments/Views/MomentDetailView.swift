@@ -521,7 +521,7 @@ public struct MomentDetailView: View {
     @ViewBuilder
     public static func photoBackground(item: FolderItem, width: CGFloat, height: CGFloat) -> some View {
         let fragment = item.toFragment()
-        if let imgName = item.imageName, let uiImage = UIImage(named: imgName) {
+        if let imgName = item.imageName, !imgName.contains("/"), let uiImage = UIImage(named: imgName) {
             Image(uiImage: uiImage)
                 .resizable()
                 .scaledToFill()
