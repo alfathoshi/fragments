@@ -33,6 +33,12 @@ struct OnboardingPage: Identifiable {
 
 struct OnboardingPageView: View {
     let page: OnboardingPage
+    /// True when this page is the currently selected page in the onboarding
+    /// pager. Illustrations gate their entrance animation on this flag so the
+    /// animation only runs when the page is actually visible — TabView
+    /// preloads adjacent pages off-screen, and relying on `onAppear` alone
+    /// lets the animation complete before the user ever sees the page.
+    var isActive: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,7 +46,7 @@ struct OnboardingPageView: View {
                 .frame(height: 80)
 
             // Illustration area
-            page.illustrationContent
+            illustration
                 .frame(height: 380)
 
             Spacer()
@@ -61,6 +67,20 @@ struct OnboardingPageView: View {
 
             Spacer()
                 .frame(height: 40)
+        }
+    }
+
+    @ViewBuilder
+    private var illustration: some View {
+        switch page.id {
+        case 0:
+            OnboardingPage1Illustration(isActive: isActive)
+        case 1:
+            OnboardingPage2Illustration(isActive: isActive)
+        case 2:
+            OnboardingPage3Illustration(isActive: isActive)
+        default:
+            page.illustrationContent
         }
     }
 }
@@ -248,6 +268,7 @@ struct OnboardingFragmentAudioCard: View {
 // MARK: - Page 1 Illustration: Scattered Fragment Cards
 
 struct OnboardingPage1Illustration: View {
+    var isActive: Bool = true
     @State private var showCenter = false
     @State private var showTopLeft = false
     @State private var showBottomRight = false
@@ -331,17 +352,36 @@ struct OnboardingPage1Illustration: View {
         }
         .frame(maxWidth: .infinity)
         .onAppear {
-            animationTask?.cancel()
-            resetAnimation()
-            animationTask = Task { @MainActor in
-                await runAnimationSequence()
+            // TabView preloads adjacent pages off-screen — only animate when
+            // this page is actually selected.
+            if isActive {
+                startAnimation()
             }
         }
         .onDisappear {
-            animationTask?.cancel()
-            animationTask = nil
-            resetAnimation()
+            stopAnimation()
         }
+        .onChange(of: isActive) { _, active in
+            if active {
+                startAnimation()
+            } else {
+                stopAnimation()
+            }
+        }
+    }
+
+    private func startAnimation() {
+        animationTask?.cancel()
+        resetAnimation()
+        animationTask = Task { @MainActor in
+            await runAnimationSequence()
+        }
+    }
+
+    private func stopAnimation() {
+        animationTask?.cancel()
+        animationTask = nil
+        resetAnimation()
     }
 
     @MainActor
@@ -425,6 +465,7 @@ struct OnboardingPage1Illustration: View {
 // MARK: - Page 3 Illustration: Moment Capture UI
 
 struct OnboardingPage3Illustration: View {
+    var isActive: Bool = true
     @State private var showLiveActivity = false
     @State private var showCard1 = false // memoPink
     @State private var showCard2 = false // onboardingPage1Center
@@ -509,17 +550,38 @@ struct OnboardingPage3Illustration: View {
         }
         .frame(maxWidth: .infinity)
         .onAppear {
-            animationTask?.cancel()
-            resetAnimation()
-            animationTask = Task { @MainActor in
-                await runAnimationSequence()
+            // Gated on selection: TabView instantiates/preloads page 3 while
+            // it is still off-screen. Starting here unconditionally lets the
+            // sequence finish before first arrival (final state visible, no
+            // visible animation). Only animate when selected.
+            if isActive {
+                startAnimation()
             }
         }
         .onDisappear {
-            animationTask?.cancel()
-            animationTask = nil
-            resetAnimation()
+            stopAnimation()
         }
+        .onChange(of: isActive) { _, active in
+            if active {
+                startAnimation()
+            } else {
+                stopAnimation()
+            }
+        }
+    }
+
+    private func startAnimation() {
+        animationTask?.cancel()
+        resetAnimation()
+        animationTask = Task { @MainActor in
+            await runAnimationSequence()
+        }
+    }
+
+    private func stopAnimation() {
+        animationTask?.cancel()
+        animationTask = nil
+        resetAnimation()
     }
 
     @MainActor
@@ -611,6 +673,7 @@ struct OnboardingPage3Illustration: View {
 // MARK: - Page 2 Illustration: Shared Moments with Memoji Avatars
 
 struct OnboardingPage2Illustration: View {
+    var isActive: Bool = true
     @State private var isOpen: Bool = true
     @State private var showAvatar1 = false
     @State private var showAvatar2 = false
@@ -694,17 +757,34 @@ struct OnboardingPage2Illustration: View {
         }
         .frame(maxWidth: .infinity)
         .onAppear {
-            animationTask?.cancel()
-            resetAnimation()
-            animationTask = Task { @MainActor in
-                await runAnimationSequence()
+            if isActive {
+                startAnimation()
             }
         }
         .onDisappear {
-            animationTask?.cancel()
-            animationTask = nil
-            resetAnimation()
+            stopAnimation()
         }
+        .onChange(of: isActive) { _, active in
+            if active {
+                startAnimation()
+            } else {
+                stopAnimation()
+            }
+        }
+    }
+
+    private func startAnimation() {
+        animationTask?.cancel()
+        resetAnimation()
+        animationTask = Task { @MainActor in
+            await runAnimationSequence()
+        }
+    }
+
+    private func stopAnimation() {
+        animationTask?.cancel()
+        animationTask = nil
+        resetAnimation()
     }
 
     @MainActor

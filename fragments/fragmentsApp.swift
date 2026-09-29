@@ -144,12 +144,13 @@ struct fragmentsApp: App {
                     switch onboardingCoordinator.phase {
                     case .splash:
                         // Transient: splash already finished, coordinator is
-                        // resolving auth/profile. Never re-shows splash.
-                        ZStack {
-                            Color(uiColor: .systemBackground).ignoresSafeArea()
-                            ProgressView()
-                        }
-                        .transition(.opacity)
+                        // resolving auth/profile (refreshSession + fetch profile).
+                        // Render silently — no ProgressView / artificial loading
+                        // bar. Routing still waits for the coordinator so the
+                        // correct root (onboarding/username/permissions/main)
+                        // appears directly with no incorrect intermediate route.
+                        Color(uiColor: .systemBackground).ignoresSafeArea()
+                            .transition(.opacity)
                     case .onboarding:
                         OnboardingView { result in
                             onboardingCoordinator.handleSignInResult(result)

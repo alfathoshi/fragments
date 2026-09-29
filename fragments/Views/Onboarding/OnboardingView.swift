@@ -63,9 +63,9 @@ struct OnboardingView: View {
                 // Swipeable page content
                 TabView(selection: $currentPage) {
                     ForEach(pages) { page in
-                        OnboardingPageView(page: page)
+                        OnboardingPageView(page: page, isActive: currentPage == page.id)
                             .tag(page.id)
-                            
+
                     }
                 }
                 .ignoresSafeArea()

@@ -29,6 +29,7 @@ public struct ProfileView: View {
     @State private var showSignOutAlert = false
     @State private var showDeleteAccountAlert = false
     @State private var isDeletingAccount = false
+    @State private var isSigningOut = false
     @State private var deleteAccountError: String? = nil
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = true
     @AppStorage("hasCompletedPermissions") private var hasCompletedPermissions: Bool = true
@@ -42,6 +43,10 @@ public struct ProfileView: View {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
         return "Version \(version) (\(build))"
+    }
+
+    private var isAccountBusy: Bool {
+        isDeletingAccount || isSigningOut
     }
 
     public var body: some View {
@@ -105,7 +110,7 @@ public struct ProfileView: View {
                 Button(isDeletingAccount ? "Deleting…" : "Delete Account", role: .destructive) {
                     handleDeleteAccount()
                 }
-                .disabled(isDeletingAccount)
+                .disabled(isDeletingAccount || isSigningOut)
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Deleting your account permanently removes your account, username, Rooms you own, shared content in those Rooms, uploaded media, and local data. This action cannot be undone.")
@@ -144,6 +149,27 @@ public struct ProfileView: View {
                     .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .overlay {
+                // Covers the full async lifecycle (server deletion → Apple
+                // revoke → local cleanup → sign out → onboarding reset). The
+                // confirmation dialog dismisses immediately on tap, so without
+                // this the UI would look idle while deletion is still running.
+                // Blocks repeated taps; restored on failure via the error alert.
+                if isDeletingAccount || isSigningOut {
+                    ZStack {
+                        Color.black.opacity(0.15).ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text(isDeletingAccount ? "Deleting account…" : "Signing out…")
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
                 }
             }
             .onChange(of: selectedPhotoItem) { _, newItem in
@@ -300,11 +326,14 @@ public struct ProfileView: View {
                 iconColor: Color.red,
                 title: "Delete Account",
                 disclosureIcon: nil,
-                isDestructive: true
+                isDestructive: true,
+                isLoading: isDeletingAccount
             ) {
+                guard !isAccountBusy else { return }
                 triggerHaptic()
                 showDeleteAccountAlert = true
             }
+            .disabled(isAccountBusy)
 
             Divider()
 
@@ -313,11 +342,14 @@ public struct ProfileView: View {
                 iconColor: Color(red: 0.95, green: 0.40, blue: 0.40),
                 title: "Sign Out",
                 disclosureIcon: nil,
-                isDestructive: true
+                isDestructive: true,
+                isLoading: isSigningOut
             ) {
+                guard !isAccountBusy else { return }
                 triggerHaptic()
                 showSignOutAlert = true
             }
+            .disabled(isAccountBusy)
         }
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -334,6 +366,7 @@ public struct ProfileView: View {
         badge: String? = nil,
         disclosureIcon: String? = "arrow.up.forward",
         isDestructive: Bool = false,
+        isLoading: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -363,24 +396,34 @@ public struct ProfileView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+
+                    if isLoading {
+                        Text(title == "Delete Account" ? "Deleting…" : "Signing out…")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Spacer()
 
-                // Optional Badge
-                if let badge = badge {
-                    Text(badge)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.06), in: Capsule())
-                }
+                if isLoading {
+                    ProgressView()
+                } else {
+                    // Optional Badge
+                    if let badge = badge {
+                        Text(badge)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                    }
 
-                if let disclosure = disclosureIcon {
-                    Image(systemName: disclosure)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                    if let disclosure = disclosureIcon {
+                        Image(systemName: disclosure)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -388,6 +431,7 @@ public struct ProfileView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowPressButtonStyle())
+        .disabled(isLoading)
     }
 
     // MARK: - 3. Bottom: Made by Alfathoshi, App Icon, Name & Copyright
@@ -479,8 +523,13 @@ public struct ProfileView: View {
     }
 
     private func handleSignOut() {
+        // Prevent duplicate taps — semantics unchanged, just guarded.
+        guard !isSigningOut, !isDeletingAccount else { return }
         triggerHaptic()
+        isSigningOut = true
         Task {
+            // Existing semantics: attempt sign-out (failures swallowed via
+            // try?), then reset launch gating and dismiss into onboarding.
             try? await supabaseService.signOut()
             hasCompletedOnboarding = false
             hasCompletedPermissions = false
@@ -488,13 +537,15 @@ public struct ProfileView: View {
             // subsequent sign-in re-resolves username → permissions → main
             // instead of reusing stale in-memory gating state.
             OnboardingCoordinator.shared.handleSignOut()
+            isSigningOut = false
             dismiss()
         }
     }
 
     private func handleDeleteAccount() {
         // Never run twice; never swallow the real deletion in `try?`.
-        guard !isDeletingAccount else { return }
+        // Also blocked while a sign-out is in flight.
+        guard !isDeletingAccount, !isSigningOut else { return }
         triggerHaptic()
         isDeletingAccount = true
         deleteAccountError = nil
