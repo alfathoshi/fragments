@@ -24,9 +24,14 @@ struct OnboardingView: View {
     @State private var coordinator = AppleSignInCoordinator.shared
 
     var onSignInComplete: ((Result<Session, Error>) -> Void)?
+    var onGuestContinue: (() -> Void)?
 
-    init(onSignInComplete: ((Result<Session, Error>) -> Void)? = nil) {
+    init(
+        onSignInComplete: ((Result<Session, Error>) -> Void)? = nil,
+        onGuestContinue: (() -> Void)? = nil
+    ) {
         self.onSignInComplete = onSignInComplete
+        self.onGuestContinue = onGuestContinue
     }
 
     private let pages: [OnboardingPage] = [
@@ -76,8 +81,20 @@ struct OnboardingView: View {
                 pageIndicator
                     .padding(.bottom, 20)
 
-                // Continue with Apple button
+                // Authentication choice: Apple (primary) or Guest (secondary).
+                // Guest Mode is a legitimate supported mode, not a skipped step.
                 continueWithAppleButton
+                    .padding(.horizontal, 20)
+
+                HStack(spacing: 12) {
+                    Text("or")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 40)
+                .padding(.vertical, 12)
+
+                continueAsGuestButton
                     .padding(.horizontal, 20)
                     .padding(.bottom, 20)
             }
@@ -129,6 +146,23 @@ struct OnboardingView: View {
                     .tint(colorScheme == .dark ? .black : .white)
             }
         }
+    }
+
+    // MARK: - Continue as Guest Button (secondary, always available)
+
+    private var continueAsGuestButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            onGuestContinue?()
+        } label: {
+            Text("Continue as Guest")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: 380)
+        .disabled(coordinator.isSigningIn)
+        .opacity(coordinator.isSigningIn ? 0.5 : 1.0)
     }
 
     // MARK: - Sign In Handler

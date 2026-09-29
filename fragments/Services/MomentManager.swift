@@ -537,6 +537,11 @@ final class MomentManager {
     /// Starts a new collaborative Shared Moment session instantly with optimistic UI navigation,
     /// and provisions the CloudKit Room asynchronously in the background.
     func startSharedSession(location: String? = nil) {
+        // Guest Mode backstop: guests have no identity, so a shared session
+        // must never be created optimistically nor provisioned remotely. The
+        // UI gates first (auth-required sheet); this prevents any other path
+        // from reaching the backend.
+        guard !OnboardingCoordinator.shared.isGuest else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let resolvedLocation = location ?? LocationManager.shared.currentLocationName ?? "Current Location"
         let roomName = "Moment in \(resolvedLocation)"

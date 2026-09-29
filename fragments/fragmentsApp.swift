@@ -152,9 +152,14 @@ struct fragmentsApp: App {
                         Color(uiColor: .systemBackground).ignoresSafeArea()
                             .transition(.opacity)
                     case .onboarding:
-                        OnboardingView { result in
-                            onboardingCoordinator.handleSignInResult(result)
-                        }
+                        OnboardingView(
+                            onSignInComplete: { result in
+                                onboardingCoordinator.handleSignInResult(result)
+                            },
+                            onGuestContinue: {
+                                onboardingCoordinator.continueAsGuest()
+                            }
+                        )
                         .transition(.opacity)
                     case .username:
                         UsernameSetupView(coordinator: onboardingCoordinator)

@@ -10,11 +10,33 @@ import SwiftUI
 /// Main listing view for the user's private collaborative Rooms.
 public struct RoomsListView: View {
     @State private var roomManager = RoomManager.shared
+    @State private var coordinator = OnboardingCoordinator.shared
     @State private var selectedRoom: Room? = nil
     @State private var showCreateSheet: Bool = false
     @State private var showJoinSheet: Bool = false
 
     public init() {}
+
+    /// Shared rooms require authentication. Guests are routed to the
+    /// product gate; the pending action reopens the intended sheet after
+    /// a successful upgrade.
+    private func requestCreateRoom() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if coordinator.isGuest {
+            coordinator.requireAuth(for: .startSharedMoment)
+            return
+        }
+        showCreateSheet = true
+    }
+
+    private func requestJoinRoom() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if coordinator.isGuest {
+            coordinator.requireAuth(for: .joinMoment)
+            return
+        }
+        showJoinSheet = true
+    }
 
     public var body: some View {
         Group {
@@ -54,11 +76,18 @@ public struct RoomsListView: View {
                 selectedRoom = joinedRoom
             }
         }
+        .sheet(
+            isPresented: Binding(
+                get: { coordinator.showAuthRequired },
+                set: { coordinator.showAuthRequired = $0 }
+            )
+        ) {
+            RequireSignInSheet(coordinator: coordinator)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showJoinSheet = true
+                    requestJoinRoom()
                 } label: {
                     Image(systemName: "person.badge.plus")
                         .font(.system(size: 15, weight: .semibold))
@@ -67,8 +96,7 @@ public struct RoomsListView: View {
                 .accessibilityLabel("Join Room with Code")
 
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showCreateSheet = true
+                    requestCreateRoom()
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 16, weight: .bold))
@@ -111,8 +139,7 @@ public struct RoomsListView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    showJoinSheet = true
+                    requestJoinRoom()
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "link")
@@ -127,8 +154,7 @@ public struct RoomsListView: View {
                 }
 
                 Button {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    showCreateSheet = true
+                    requestCreateRoom()
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "plus")

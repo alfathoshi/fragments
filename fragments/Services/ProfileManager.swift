@@ -85,7 +85,12 @@ public final class ProfileManager {
         // Keep Supabase `profiles.display_name` in sync so room member lists
         // render the real name instead of the schema default ("Fragment Explorer").
         // Fire-and-forget: invite/member read flows are unaffected on failure.
-        if !trimmed.isEmpty, !RoomMember.isUnresolvedDisplayName(trimmed) {
+        // Guest Mode stays strictly local: guests have no Supabase identity,
+        // so no backend write is attempted (RLS-guarded tables are never
+        // touched and no profile row is created).
+        if !trimmed.isEmpty,
+           !RoomMember.isUnresolvedDisplayName(trimmed),
+           SupabaseService.shared.isAuthenticated {
             Task {
                 try? await SupabaseRoomRepository.shared.upsertCurrentUserProfile(displayName: trimmed)
             }

@@ -333,6 +333,12 @@ public final class RoomManager {
         createdAt: Date? = nil,
         backend: RoomBackend = .supabase
     ) async throws -> Room {
+        // Guest Mode backstop: guests have no Supabase identity and must be
+        // gated at the UI layer first. Never provision shared rooms for them
+        // on any backend — fail fast instead of attempting authed requests.
+        if OnboardingCoordinator.shared.isGuest {
+            throw SupabaseRoomError.notAuthenticated
+        }
         isLoading = true
         defer { isLoading = false }
 
@@ -417,6 +423,11 @@ public final class RoomManager {
 
     /// Joins an existing Supabase collaborative Room by join code.
     public func joinRoom(code: String) async throws -> Room {
+        // Guest Mode backstop (see createRoom): fail fast, never attempt an
+        // authenticated join without an identity.
+        if OnboardingCoordinator.shared.isGuest {
+            throw SupabaseRoomError.notAuthenticated
+        }
         isLoading = true
         defer { isLoading = false }
 

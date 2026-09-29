@@ -35,6 +35,13 @@ public struct UsernameSetupView: View {
     ) {
         self.repository = repository
         self.coordinator = coordinator
+        // Pre-fill with the existing local signature so a guest upgrading
+        // with e.g. username "alfathoshi" is offered it as the starting
+        // value. Availability/claim RPCs still decide authoritatively, and an
+        // existing backend username never reaches this screen.
+        let localSignature = ProfileManager.shared.signature
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self._rawText = State(initialValue: localSignature)
     }
 
     private var normalized: String {

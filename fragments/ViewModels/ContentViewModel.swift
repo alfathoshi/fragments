@@ -175,6 +175,13 @@ final class ContentViewModel {
                 }
             }
         } else if url.host == "room" || url.host == "join" {
+            // Shared deep links require authentication — guests get the
+            // product gate (resuming into the join flow) instead of touching
+            // room backends without an identity.
+            if OnboardingCoordinator.shared.isGuest {
+                OnboardingCoordinator.shared.requireAuth(for: .joinMoment)
+                return
+            }
             let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
             if let code = queryItems?.first(where: { $0.name == "code" })?.value,
                code.trimmingCharacters(in: .whitespacesAndNewlines).count == 6 {
@@ -284,13 +291,47 @@ final class ContentViewModel {
         }
     }
 
+    /// Shared Moment entry point. Guests have no Supabase identity, so they
+    /// are routed to the authentication-required gate instead of reaching
+    /// the backend. The intended action is preserved and resumed after a
+    /// successful Guest → sign-in upgrade.
     func handleStartSharedMoment() {
+        guard !OnboardingCoordinator.shared.isGuest else {
+            OnboardingCoordinator.shared.requireAuth(for: .startSharedMoment)
+            return
+        }
         if momentManager.isSessionActive {
             pendingStartMomentIsShared = true
             showResumeOrNewMomentAlert = true
         } else {
             momentManager.startSharedSession()
             showActiveMomentView = true
+        }
+    }
+
+    /// Join Moment entry point (capture overlay). Same guest gating as above.
+    func requestJoinMoment() {
+        guard !OnboardingCoordinator.shared.isGuest else {
+            OnboardingCoordinator.shared.requireAuth(for: .joinMoment)
+            return
+        }
+        showJoinSheet = true
+    }
+
+    /// Resumes the blocked shared action after a successful sign-in upgrade.
+    /// Only runs on the main phase with a live session — a fresh sign-in that
+    /// still needs username setup keeps the pending action until main.
+    func consumePendingSharedAction() {
+        let coordinator = OnboardingCoordinator.shared
+        guard coordinator.phase == .main,
+              SupabaseService.shared.isAuthenticated,
+              let pending = coordinator.pendingSharedAction else { return }
+        coordinator.pendingSharedAction = nil
+        switch pending {
+        case .startSharedMoment:
+            handleStartSharedMoment()
+        case .joinMoment:
+            showJoinSheet = true
         }
     }
 

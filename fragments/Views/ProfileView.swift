@@ -31,9 +31,12 @@ public struct ProfileView: View {
     @State private var isDeletingAccount = false
     @State private var isSigningOut = false
     @State private var deleteAccountError: String? = nil
+    @State private var guestSignInError: String? = nil
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = true
     @AppStorage("hasCompletedPermissions") private var hasCompletedPermissions: Bool = true
     @State private var supabaseService = SupabaseService.shared
+    @State private var coordinator = OnboardingCoordinator.shared
+    @State private var appleSignIn = AppleSignInCoordinator.shared
 
     public init(profileManager: ProfileManager = ProfileManager.shared) {
         self.profileManager = profileManager
@@ -49,6 +52,12 @@ public struct ProfileView: View {
         isDeletingAccount || isSigningOut
     }
 
+    /// Guests have no backend account: Sign Out / Delete Account are hidden
+    /// and a Sign in with Apple card is shown instead.
+    private var isGuest: Bool {
+        coordinator.isGuest
+    }
+
     public var body: some View {
         NavigationStack {
             ScrollView {
@@ -57,10 +66,19 @@ public struct ProfileView: View {
                     profileHeaderView
                         .padding(.top, 16)
 
+                    // 2. Guest upgrade / authenticated account actions.
+                    // Guest: Sign in with Apple directly below the header.
+                    // Authenticated: Sign Out + Delete Account (unchanged).
+                    if isGuest {
+                        guestSignInSectionView
+                    }
+
                     // 3. Sections: Rate Us, Contact Us, Privacy Policy
                     actionsSectionView
-                    
-                    accountSectionView
+
+                    if !isGuest {
+                        accountSectionView
+                    }
 
                     // 4. Bottom: Made by Alfathoshi, App Icon, App Name & Copyright
                     bottomAppIconView
@@ -255,6 +273,12 @@ public struct ProfileView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel(profileManager.signature.isEmpty ? "Add Signature" : "Edit Signature: \(profileManager.signature)")
+
+            if coordinator.isGuest {
+                Text("Guest profile · stored on this device")
+                    .font(.system(size: 11, weight: .regular, design: .rounded))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -312,6 +336,64 @@ public struct ProfileView: View {
                 }
             }
         }
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        )
+    }
+
+    // MARK: - Guest Upgrade (Sign in with Apple, below the header)
+
+    /// Shown only to guests. Reuses the existing AppleSignInCoordinator flow
+    /// (including server-side credential linking) — no duplicate sign-in
+    /// implementation. Local profile, SwiftData moments, and avatar are left
+    /// intact; the view updates reactively when `isGuest` flips.
+    private var guestSignInSectionView: some View {
+        VStack(spacing: 10) {
+            Button {
+                handleGuestSignIn()
+            } label: {
+                HStack(spacing: 8) {
+                    if appleSignIn.isSigningIn {
+                        ProgressView()
+                            .tint(colorScheme == .dark ? .black : .white)
+                    } else {
+                        Image(systemName: "apple.logo")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    Text(appleSignIn.isSigningIn ? "Signing in…" : "Sign in with Apple")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                }
+                .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            .tint(.primary)
+            .glassProminentButtonStyle()
+            .clipShape(Capsule())
+            .disabled(appleSignIn.isSigningIn)
+            .opacity(appleSignIn.isSigningIn ? 0.6 : 1.0)
+
+            Text("Sign in to share moments and sync across devices")
+                .font(.system(size: 12, weight: .regular, design: .rounded))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            if let guestSignInError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13))
+                    Text(guestSignInError)
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                }
+                .foregroundStyle(.secondary)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color(uiColor: .secondarySystemGroupedBackground))
@@ -522,8 +604,30 @@ public struct ProfileView: View {
         }
     }
 
-    private func handleSignOut() {
-        // Prevent duplicate taps — semantics unchanged, just guarded.
+    /// Guest → authenticated upgrade from Profile. Reuses the shared Apple
+    /// flow; local profile and personal data are preserved by design
+    /// (handleSignInResult never wipes). Cancellation is silent.
+    private func handleGuestSignIn() {
+        guard !appleSignIn.isSigningIn else { return }
+        triggerHaptic()
+        guestSignInError = nil
+        Task {
+            do {
+                let session = try await appleSignIn.signIn()
+                coordinator.handleSignInResult(.success(session))
+            } catch {
+                if let appleError = error as? AppleSignInError,
+                   case .userCancelled = appleError {
+                    // Silent: the guest simply stays a guest.
+                } else {
+                    guestSignInError = error.localizedDescription
+                    coordinator.handleSignInResult(.failure(error))
+                }
+            }
+        }
+    }
+
+    private func handleSignOut() {        // Prevent duplicate taps — semantics unchanged, just guarded.
         guard !isSigningOut, !isDeletingAccount else { return }
         triggerHaptic()
         isSigningOut = true

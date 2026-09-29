@@ -18,6 +18,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var viewModel = ContentViewModel()
+    @State private var coordinator = OnboardingCoordinator.shared
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -87,7 +88,7 @@ struct ContentView: View {
                         viewModel.handleStartSharedMoment()
                     },
                     onSelectJoinMoment: {
-                        viewModel.showJoinSheet = true
+                        viewModel.requestJoinMoment()
                     },
                     onSelectQuickCaptureType: { type in
                         if viewModel.momentManager.isSessionActive {
@@ -286,8 +287,34 @@ struct ContentView: View {
             .presentationDetents([.height(300), .large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(
+            isPresented: Binding(
+                get: { coordinator.showAuthRequired },
+                set: { coordinator.showAuthRequired = $0 }
+            )
+        ) {
+            RequireSignInSheet(coordinator: coordinator)
+        }
         .onAppear {
             viewModel.setModelContext(modelContext)
+            // Covers the Guest → sign-in upgrade that resolves without a
+            // phase change (already .main): the auth sheet dismissal flips
+            // showAuthRequired, which lands here via the change handler below.
+            viewModel.consumePendingSharedAction()
+        }
+        .onChange(of: coordinator.phase) { _, newPhase in
+            // Fresh upgrades that pass through username/permissions land on
+            // .main here — resume the blocked shared action, if any.
+            if newPhase == .main {
+                viewModel.consumePendingSharedAction()
+            }
+        }
+        .onChange(of: coordinator.showAuthRequired) { _, isPresented in
+            // Upgrade completed while already on .main (returning user with a
+            // backend username skips setup): resume once the sheet closes.
+            if !isPresented {
+                viewModel.consumePendingSharedAction()
+            }
         }
         .onOpenURL { url in
             viewModel.handleDeepLink(url)
