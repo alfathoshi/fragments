@@ -47,6 +47,9 @@ public final class RoomManager {
     /// Last error encountered during room operations.
     public private(set) var lastError: String? = nil
 
+    /// Room IDs removed locally (discard/leave) that must not reappear until remote deletion is confirmed.
+    public private(set) var locallyRemovedRoomIDs: Set<String> = []
+
     /// Active collaborative Supabase Rooms eligible for publishing personal fragments.
     public var eligibleSupabaseRooms: [Room] {
         rooms.filter { room in
@@ -131,7 +134,7 @@ public final class RoomManager {
     public func loadFromCache() {
         do {
             let cached = try LocalRoomCache.shared.loadRooms()
-            self.rooms = cached
+            self.rooms = cached.filter { !isLocallyRemoved($0.id) }
         } catch {
             self.lastError = "Failed to load cached rooms: \(error.localizedDescription)"
         }
@@ -194,7 +197,9 @@ public final class RoomManager {
             }
             // Sort by createdAt descending
             merged.sort { $0.createdAt > $1.createdAt }
-            self.rooms = merged
+            let remoteIDs = Set(merged.map { $0.id.lowercased() })
+            locallyRemovedRoomIDs = locallyRemovedRoomIDs.filter { remoteIDs.contains($0) }
+            self.rooms = merged.filter { !isLocallyRemoved($0.id) }
             self.lastError = nil
 
             // Persist to local disk cache
@@ -236,9 +241,30 @@ public final class RoomManager {
                 // Discard stale response if user switched rooms during the fetch
                 guard self.activeRoomGeneration == generation && self.currentRoom?.id == roomID else { return }
 
-                self.members = newMembers
-                for member in newMembers {
-                    if !member.displayName.isEmpty && member.displayName != "Member" {
+                // Repair unresolved placeholders (e.g. DB default "Fragment Explorer" /
+                // Realtime "Member") with local identity before publishing to UI.
+                // The current user always resolves from ProfileManager; others use
+                // the profile cache with async backfill below.
+                let currentSupabaseID = supabaseService.currentUserID?.lowercased()
+                let localEffectiveName = ProfileManager.shared.effectiveName
+                let localNameIsReal = !RoomMember.isUnresolvedDisplayName(localEffectiveName)
+                var repairedMembers = newMembers
+                for i in repairedMembers.indices {
+                    if RoomMember.isUnresolvedDisplayName(repairedMembers[i].displayName) {
+                        if let currentSupabaseID,
+                           repairedMembers[i].userId.lowercased() == currentSupabaseID,
+                           localNameIsReal {
+                            repairedMembers[i].displayName = localEffectiveName
+                        } else if let cached = self.profileCache[repairedMembers[i].userId] {
+                            repairedMembers[i].displayName = cached.displayName
+                            repairedMembers[i].avatarAssetURL = cached.avatarURL
+                        }
+                    }
+                }
+
+                self.members = repairedMembers
+                for member in repairedMembers {
+                    if !RoomMember.isUnresolvedDisplayName(member.displayName) {
                         self.profileCache[member.userId] = (member.displayName, member.avatarAssetURL)
                     }
                 }
@@ -246,8 +272,18 @@ public final class RoomManager {
                 self.fragments = self.mergeFragments(existing: self.fragments, incoming: newFragments)
 
                 // Update cache
-                try? await localRepository.saveMembers(newMembers, roomID: roomID)
+                try? await localRepository.saveMembers(repairedMembers, roomID: roomID)
                 try? await localRepository.saveFragments(self.fragments, roomID: roomID)
+
+                // One-shot async backfill for remaining unresolved non-current members.
+                let pendingIDs = Set(repairedMembers
+                    .filter { RoomMember.isUnresolvedDisplayName($0.displayName) }
+                    .map(\.userId))
+                if !pendingIDs.isEmpty {
+                    Task { [weak self] in
+                        await self?.backfillUnresolvedMemberNames(roomID: roomID, userIDs: pendingIDs)
+                    }
+                }
             } catch {
                 self.lastError = "Failed to refresh room details: \(error.localizedDescription)"
             }
@@ -297,6 +333,13 @@ public final class RoomManager {
                     emoji: emoji,
                     accentColorHex: accentColorHex
                 )
+                // Discard guard: if this room was synchronously suppressed by
+                // cancelSession while provisioning was in flight, do not resurrect it.
+                if isLocallyRemoved(newRoom.id) {
+                    try? await supabaseRepository.deleteRoom(roomID: newRoom.id)
+                    throw SupabaseRoomError.validationFailure("Room was discarded before provisioning completed.")
+                }
+                locallyRemovedRoomIDs.remove(newRoom.id.lowercased())
 
                 if let idx = self.rooms.firstIndex(where: { $0.id == newRoom.id }) {
                     self.rooms[idx] = newRoom
@@ -322,6 +365,10 @@ public final class RoomManager {
                     createdAt: createdAt
                 )
 
+                if isLocallyRemoved(newRoom.id) {
+                    try? await cloudKitRepository.deleteRoom(id: newRoom.id)
+                    throw CloudKitRoomError.operationFailed("Room was discarded before provisioning completed.")
+                }
                 self.rooms.insert(newRoom, at: 0)
                 self.currentRoom = newRoom
                 self.lastError = nil
@@ -333,6 +380,9 @@ public final class RoomManager {
 
                 // Resilient fallback for offline / unauthenticated simulator:
                 let roomId = id ?? UUID().uuidString
+                guard !isLocallyRemoved(roomId) else {
+                    throw CloudKitRoomError.operationFailed("Room was discarded before provisioning completed.")
+                }
                 let localRoom = Room(
                     id: roomId,
                     name: name,
@@ -361,6 +411,7 @@ public final class RoomManager {
 
         do {
             let joinedRoom = try await supabaseRepository.joinRoom(code: code)
+            locallyRemovedRoomIDs.remove(joinedRoom.id.lowercased())
 
             if let idx = rooms.firstIndex(where: { $0.id == joinedRoom.id }) {
                 rooms[idx] = joinedRoom
@@ -436,6 +487,25 @@ public final class RoomManager {
         }
     }
 
+    /// Immediately drops a room from in-memory lists so Moments cannot synthesize it during discard.
+    public func removeRoomFromLocalState(id: String) {
+        locallyRemovedRoomIDs.insert(id.lowercased())
+        rooms.removeAll { $0.id.caseInsensitiveCompare(id) == .orderedSame }
+        if currentRoom?.id.caseInsensitiveCompare(id) == .orderedSame {
+            stopRealtime(roomID: currentRoom?.id ?? id)
+            currentRoom = nil
+            members = []
+            fragments = []
+        }
+        Task {
+            try? await localRepository.deleteRoom(id: id)
+        }
+    }
+
+    private func isLocallyRemoved(_ roomID: String) -> Bool {
+        locallyRemovedRoomIDs.contains(roomID.lowercased())
+    }
+
     /// Deletes a room from the appropriate backend and purges local cache upon remote success.
     public func deleteRoom(id: String) async throws {
         isLoading = true
@@ -448,6 +518,8 @@ public final class RoomManager {
         }
         let resolvedBackend = targetBackend ?? .cloudKit
 
+        removeRoomFromLocalState(id: id)
+
         do {
             if resolvedBackend == .supabase {
                 try await supabaseRepository.deleteRoom(roomID: id)
@@ -456,12 +528,6 @@ public final class RoomManager {
             }
 
             try await localRepository.deleteRoom(id: id)
-
-            rooms.removeAll { $0.id == id }
-            if currentRoom?.id == id {
-                stopRealtime(roomID: id)
-                currentRoom = nil
-            }
         } catch {
             self.lastError = error.localizedDescription
             throw error
@@ -477,6 +543,8 @@ public final class RoomManager {
         }
         let resolvedBackend = targetBackend ?? .cloudKit
 
+        removeRoomFromLocalState(id: id)
+
         if resolvedBackend == .supabase {
             do {
                 try await supabaseRepository.leaveRoom(roomID: id)
@@ -484,13 +552,6 @@ public final class RoomManager {
                 self.lastError = "Failed to leave room remotely: \(error.localizedDescription)"
             }
         }
-
-        if currentRoom?.id == id {
-            stopRealtime(roomID: id)
-            currentRoom = nil
-        }
-        rooms.removeAll { $0.id == id }
-        try? await localRepository.deleteRoom(id: id)
     }
 
     /// Accepts an incoming CloudKit share or join URL, adds the room to observable rooms, and caches it locally.
@@ -508,7 +569,7 @@ public final class RoomManager {
 
             Task {
                 let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
-                let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+                let currentName = ProfileManager.shared.effectiveName
                 let member = RoomMember(
                     roomId: room.id,
                     userId: currentId,
@@ -775,6 +836,7 @@ public final class RoomManager {
 
         switch event {
         case .roomChanged(let updatedRoom):
+            if isLocallyRemoved(updatedRoom.id) { return }
             if currentRoom?.id == updatedRoom.id {
                 currentRoom = updatedRoom
             }
@@ -797,17 +859,25 @@ public final class RoomManager {
 
         case .memberJoined(var member):
             guard member.roomId == roomID else { return }
-            if member.displayName == "Member" || member.displayName.isEmpty {
-                if let cached = profileCache[member.userId] {
+            if RoomMember.isUnresolvedDisplayName(member.displayName) {
+                // Current user resolves locally first — never re-query our own placeholder.
+                if let currentSupabaseID = supabaseService.currentUserID,
+                   member.userId.caseInsensitiveCompare(currentSupabaseID) == .orderedSame,
+                   !RoomMember.isUnresolvedDisplayName(ProfileManager.shared.effectiveName) {
+                    member.displayName = ProfileManager.shared.effectiveName
+                } else if let cached = profileCache[member.userId] {
                     member.displayName = cached.displayName
                     member.avatarAssetURL = cached.avatarURL
                 } else if let userUUID = UUID(uuidString: member.userId) {
                     if let repo = supabaseRepository as? SupabaseRoomRepository {
                         if let profile = try? await repo.fetchUserProfile(userID: userUUID) {
-                            member.displayName = profile.displayName
-                            let avatarURL: URL? = profile.avatarStoragePath.flatMap { URL(string: $0) }
-                            member.avatarAssetURL = avatarURL
-                            profileCache[member.userId] = (profile.displayName, avatarURL)
+                            // fetchUserProfile falls back to "Unknown"; only adopt real names.
+                            if !RoomMember.isUnresolvedDisplayName(profile.displayName) {
+                                member.displayName = profile.displayName
+                                let avatarURL: URL? = profile.avatarStoragePath.flatMap { URL(string: $0) }
+                                member.avatarAssetURL = avatarURL
+                                profileCache[member.userId] = (profile.displayName, avatarURL)
+                            }
                         }
                     }
                 }
@@ -821,17 +891,23 @@ public final class RoomManager {
 
         case .memberChanged(var member):
             guard member.roomId == roomID else { return }
-            if member.displayName == "Member" || member.displayName.isEmpty {
-                if let cached = profileCache[member.userId] {
+            if RoomMember.isUnresolvedDisplayName(member.displayName) {
+                if let currentSupabaseID = supabaseService.currentUserID,
+                   member.userId.caseInsensitiveCompare(currentSupabaseID) == .orderedSame,
+                   !RoomMember.isUnresolvedDisplayName(ProfileManager.shared.effectiveName) {
+                    member.displayName = ProfileManager.shared.effectiveName
+                } else if let cached = profileCache[member.userId] {
                     member.displayName = cached.displayName
                     member.avatarAssetURL = cached.avatarURL
                 } else if let userUUID = UUID(uuidString: member.userId) {
                     if let repo = supabaseRepository as? SupabaseRoomRepository {
                         if let profile = try? await repo.fetchUserProfile(userID: userUUID) {
-                            member.displayName = profile.displayName
-                            let avatarURL: URL? = profile.avatarStoragePath.flatMap { URL(string: $0) }
-                            member.avatarAssetURL = avatarURL
-                            profileCache[member.userId] = (profile.displayName, avatarURL)
+                            if !RoomMember.isUnresolvedDisplayName(profile.displayName) {
+                                member.displayName = profile.displayName
+                                let avatarURL: URL? = profile.avatarStoragePath.flatMap { URL(string: $0) }
+                                member.avatarAssetURL = avatarURL
+                                profileCache[member.userId] = (profile.displayName, avatarURL)
+                            }
                         }
                     }
                 }
@@ -902,10 +978,71 @@ public final class RoomManager {
         broadcastRealtimeEvent(event)
     }
 
+    /// Resolves the stored author display name for a fragment in a room.
+    ///
+    /// `Fragment` (used by the sphere/detail UI) drops authorship at conversion
+    /// time, so detail views resolve it here: in-memory shared state first,
+    /// then the local disk cache (covers saved/ended moments after restart).
+    /// Returns nil when no attribution is known, or the stored name is blank —
+    /// callers hide the "Captured by" row in that case.
+    /// Users who never set a username resolve to "Unknown" upstream.
+    public func authorName(forFragmentID fragmentID: String, roomID: String?) -> String? {
+        if let match = fragments.first(where: { $0.id == fragmentID }) {
+            let trimmed = match.authorName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let roomID, !roomID.isEmpty,
+              let cached = try? LocalRoomCache.shared.loadFragments(roomID: roomID).first(where: { $0.id == fragmentID }) else {
+            return nil
+        }
+        let trimmed = cached.authorName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// One-shot backfill for member rows whose display name is still a placeholder
+    /// (DB default "Fragment Explorer" normalized to "Unknown" at decode time).
+    /// Resolves the current user locally and others via `fetchUserProfile`,
+    /// adopting only real names so placeholders never overwrite real names.
+    public func backfillUnresolvedMemberNames(roomID: String, userIDs: Set<String>) async {
+        guard currentRoom?.id == roomID else { return }
+        guard let repo = supabaseRepository as? SupabaseRoomRepository else { return }
+        let currentSupabaseID = supabaseService.currentUserID?.lowercased()
+        let localEffectiveName = ProfileManager.shared.effectiveName
+        var updated = members
+        var didChange = false
+        for i in updated.indices where userIDs.contains(updated[i].userId)
+            && RoomMember.isUnresolvedDisplayName(updated[i].displayName) {
+            if let currentSupabaseID,
+               updated[i].userId.lowercased() == currentSupabaseID,
+               !RoomMember.isUnresolvedDisplayName(localEffectiveName) {
+                updated[i].displayName = localEffectiveName
+                didChange = true
+                continue
+            }
+            if let cached = profileCache[updated[i].userId] {
+                updated[i].displayName = cached.displayName
+                updated[i].avatarAssetURL = cached.avatarURL
+                didChange = true
+                continue
+            }
+            if let userUUID = UUID(uuidString: updated[i].userId),
+               let profile = try? await repo.fetchUserProfile(userID: userUUID),
+               !RoomMember.isUnresolvedDisplayName(profile.displayName) {
+                updated[i].displayName = profile.displayName
+                updated[i].avatarAssetURL = profile.avatarStoragePath.flatMap { URL(string: $0) }
+                profileCache[updated[i].userId] = (profile.displayName, updated[i].avatarAssetURL)
+                didChange = true
+            }
+        }
+        guard didChange else { return }
+        guard currentRoom?.id == roomID else { return }
+        members = updated
+        try? await localRepository.saveMembers(updated, roomID: roomID)
+    }
+
     /// Performs an authoritative scoped refetch of fragments from the remote database to reconcile state.
     /// Employs generation checks and non-destructive merging to prevent race conditions with active Realtime streams.
-    public func reconcileFragments(roomID: String) async {
-        guard currentRoom?.id == roomID else { return }
+    public func reconcileFragments(roomID: String) async {        guard currentRoom?.id == roomID else { return }
         let targetBackend = currentRoom?.backend ?? .cloudKit
         let generation = activeRoomGeneration
 

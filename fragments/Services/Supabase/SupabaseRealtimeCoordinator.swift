@@ -334,15 +334,25 @@ public final class SupabaseRealtimeCoordinator {
     private func handleFragmentsAction(_ action: AnyAction, forRoom roomID: String) {
         switch action {
         case .insert(let ins):
-            guard let frag = try? ins.record.decode(as: DatabaseSharedFragment.self).toDomain() else { return }
-            if checkDeduplicationAndOrder(table: "shared_fragments", op: "insert", id: frag.id, timestamp: ins.commitTimestamp, recordTime: ins.record["created_at"]?.stringValue) {
-                emit(.fragmentCreated(frag))
+            do {
+                let frag = try ins.record.decode(as: DatabaseSharedFragment.self).toDomain()
+                if checkDeduplicationAndOrder(table: "shared_fragments", op: "insert", id: frag.id, timestamp: ins.commitTimestamp, recordTime: ins.record["created_at"]?.stringValue) {
+                    emit(.fragmentCreated(frag))
+                }
+            } catch {
+                // Never silently drop a live fragment: a decode failure here is why
+                // captures would not appear on other devices.
+                print("❌ [Realtime] Dropping shared_fragments INSERT for room \(roomID): decode failed: \(error)")
             }
 
         case .update(let upd):
-            guard let frag = try? upd.record.decode(as: DatabaseSharedFragment.self).toDomain() else { return }
-            if checkDeduplicationAndOrder(table: "shared_fragments", op: "update", id: frag.id, timestamp: upd.commitTimestamp, recordTime: upd.record["created_at"]?.stringValue) {
-                emit(.fragmentUpdated(frag))
+            do {
+                let frag = try upd.record.decode(as: DatabaseSharedFragment.self).toDomain()
+                if checkDeduplicationAndOrder(table: "shared_fragments", op: "update", id: frag.id, timestamp: upd.commitTimestamp, recordTime: upd.record["created_at"]?.stringValue) {
+                    emit(.fragmentUpdated(frag))
+                }
+            } catch {
+                print("❌ [Realtime] Dropping shared_fragments UPDATE for room \(roomID): decode failed: \(error)")
             }
 
         case .delete(let del):
@@ -358,23 +368,33 @@ public final class SupabaseRealtimeCoordinator {
     private func handleMediaAction(_ action: AnyAction, forRoom roomID: String) {
         switch action {
         case .insert(let ins):
-            guard let mediaDTO = try? ins.record.decode(as: DatabaseFragmentMedia.self) else { return }
-            let ref = mediaDTO.toMediaReference()
-            let fragID = mediaDTO.fragment_id?.uuidString ?? ""
-            let rID = mediaDTO.room_id?.uuidString.lowercased() ?? roomID
-            let dedupID = "\(fragID)_\(mediaDTO.storage_path)"
-            if checkDeduplicationAndOrder(table: "fragment_media", op: "insert", id: dedupID, timestamp: ins.commitTimestamp, recordTime: nil) {
-                emit(.fragmentMediaCreated(media: ref, fragmentID: fragID, roomID: rID))
+            do {
+                let mediaDTO = try ins.record.decode(as: DatabaseFragmentMedia.self)
+                let ref = mediaDTO.toMediaReference()
+                let fragID = mediaDTO.fragment_id?.uuidString ?? ""
+                let rID = mediaDTO.room_id?.uuidString.lowercased() ?? roomID
+                let dedupID = "\(fragID)_\(mediaDTO.storage_path)"
+                if checkDeduplicationAndOrder(table: "fragment_media", op: "insert", id: dedupID, timestamp: ins.commitTimestamp, recordTime: nil) {
+                    emit(.fragmentMediaCreated(media: ref, fragmentID: fragID, roomID: rID))
+                }
+            } catch {
+                // A dropped media event leaves the fragment permanently imageless
+                // on peers — log instead of swallowing.
+                print("❌ [Realtime] Dropping fragment_media INSERT for room \(roomID): decode failed: \(error)")
             }
 
         case .update(let upd):
-            guard let mediaDTO = try? upd.record.decode(as: DatabaseFragmentMedia.self) else { return }
-            let ref = mediaDTO.toMediaReference()
-            let fragID = mediaDTO.fragment_id?.uuidString ?? ""
-            let rID = mediaDTO.room_id?.uuidString.lowercased() ?? roomID
-            let dedupID = "\(fragID)_\(mediaDTO.storage_path)"
-            if checkDeduplicationAndOrder(table: "fragment_media", op: "update", id: dedupID, timestamp: upd.commitTimestamp, recordTime: nil) {
-                emit(.fragmentMediaCreated(media: ref, fragmentID: fragID, roomID: rID))
+            do {
+                let mediaDTO = try upd.record.decode(as: DatabaseFragmentMedia.self)
+                let ref = mediaDTO.toMediaReference()
+                let fragID = mediaDTO.fragment_id?.uuidString ?? ""
+                let rID = mediaDTO.room_id?.uuidString.lowercased() ?? roomID
+                let dedupID = "\(fragID)_\(mediaDTO.storage_path)"
+                if checkDeduplicationAndOrder(table: "fragment_media", op: "update", id: dedupID, timestamp: upd.commitTimestamp, recordTime: nil) {
+                    emit(.fragmentMediaCreated(media: ref, fragmentID: fragID, roomID: rID))
+                }
+            } catch {
+                print("❌ [Realtime] Dropping fragment_media UPDATE for room \(roomID): decode failed: \(error)")
             }
 
         case .delete(let del):
@@ -477,7 +497,7 @@ struct RealtimeRoomMemberPayload: Decodable, Sendable {
             id: id.uuidString,
             roomId: room_id.uuidString,
             userId: user_id.uuidString,
-            displayName: "Member",
+            displayName: "Unknown",
             role: memberRole,
             joinedAt: SupabaseRoomRepository.parseISO8601(joined_at),
             avatarAssetURL: nil

@@ -99,6 +99,7 @@ public struct JoinRoomSheet: View {
                         }
                         Text(isJoining ? "Joining..." : "Join Moment")
                             .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(colorScheme == .dark ? .black : .white)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)

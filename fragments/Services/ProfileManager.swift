@@ -67,6 +67,14 @@ public final class ProfileManager {
         } else {
             UserDefaults.standard.set(trimmed, forKey: signatureKey)
         }
+        // Keep Supabase `profiles.display_name` in sync so room member lists
+        // render the real name instead of the schema default ("Fragment Explorer").
+        // Fire-and-forget: invite/member read flows are unaffected on failure.
+        if !trimmed.isEmpty, !RoomMember.isUnresolvedDisplayName(trimmed) {
+            Task {
+                try? await SupabaseRoomRepository.shared.upsertCurrentUserProfile(displayName: trimmed)
+            }
+        }
     }
 
     public func updateAvatar(image: UIImage, data: Data) {

@@ -54,6 +54,51 @@ public struct FolderCollection: Identifiable, Hashable {
     }
 }
 
+/// Builds the Moments tab list from saved collections plus completed shared rooms.
+/// In-progress rooms are excluded so discarding a live session never flashes as a saved Moment.
+enum MomentsCatalog {
+    static func visibleMoments(
+        savedCollections: [FolderCollection],
+        rooms: [Room],
+        activeRoomID: String?,
+        suppressedRoomIDs: Set<String> = []
+    ) -> [FolderCollection] {
+        var result = savedCollections
+        let existingRoomIDs = Set(result.compactMap(\.roomID))
+        let suppressed = Set(suppressedRoomIDs.map { $0.lowercased() })
+        let activeID = activeRoomID?.lowercased()
+
+        for room in rooms {
+            let roomKey = room.id.lowercased()
+            if suppressed.contains(roomKey) { continue }
+            if let activeID, roomKey == activeID { continue }
+            if existingRoomIDs.contains(room.id) { continue }
+            // Live collaborative sessions are not personal Moments until explicitly saved/ended.
+            guard room.isEnded || room.isArchived else { continue }
+
+            let cachedFragments = (try? LocalRoomCache.shared.loadFragments(roomID: room.id)) ?? []
+            let items = cachedFragments.map { FolderItem(from: $0.toFragment()) }
+            let color = room.accentColorHex.map { Color.fromRGBAString($0) }
+            let stableUUID = UUID(uuidString: room.id) ?? UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012x", abs(room.id.hashValue)))") ?? UUID()
+            result.append(
+                FolderCollection(
+                    id: stableUUID,
+                    name: room.finalTitle ?? room.name,
+                    location: "Shared",
+                    date: room.createdAt,
+                    items: items,
+                    color: color,
+                    isShared: true,
+                    roomID: room.id,
+                    category: room.finalCategory ?? "Friends"
+                )
+            )
+        }
+
+        return result.sorted { $0.date > $1.date }
+    }
+}
+
 // MARK: - Moments View (Unified Personal & Shared Moments)
 
 struct MomentsView: View {
@@ -74,33 +119,12 @@ struct MomentsView: View {
 
     /// Unified list of all moments (both personal and collaborative rooms)
     private var allMoments: [FolderCollection] {
-        var result = viewModel.momentManager.collections
-        let existingRoomIDs = Set(result.compactMap(\.roomID))
-        let activeRoomID = viewModel.momentManager.activeSession?.room?.id
-
-        for room in RoomManager.shared.rooms {
-            // Exclude rooms already saved in collections and exclude the currently active session room
-            if !existingRoomIDs.contains(room.id) && room.id != activeRoomID {
-                let cachedFragments = (try? LocalRoomCache.shared.loadFragments(roomID: room.id)) ?? []
-                let items = cachedFragments.map { FolderItem(from: $0.toFragment()) }
-                let color = room.accentColorHex.map { Color.fromRGBAString($0) }
-                let stableUUID = UUID(uuidString: room.id) ?? UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012x", abs(room.id.hashValue)))") ?? UUID()
-                let collection = FolderCollection(
-                    id: stableUUID,
-                    name: room.name,
-                    location: "Shared",
-                    date: room.createdAt,
-                    items: items,
-                    color: color,
-                    isShared: true,
-                    roomID: room.id,
-                    category: "Friends"
-                )
-                result.append(collection)
-            }
-        }
-
-        return result.sorted { $0.date > $1.date }
+        MomentsCatalog.visibleMoments(
+            savedCollections: viewModel.momentManager.collections,
+            rooms: RoomManager.shared.rooms,
+            activeRoomID: viewModel.momentManager.activeSession?.room?.id,
+            suppressedRoomIDs: RoomManager.shared.locallyRemovedRoomIDs
+        )
     }
 
     var body: some View {

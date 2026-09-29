@@ -247,6 +247,53 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
 
     // MARK: - User Profile Reads
 
+    /// Upserts the current authenticated user's profile row so Supabase
+    /// `profiles.display_name` reflects the local signature (ProfileManager).
+    ///
+    /// Root-cause fix for member lists rendering the schema default
+    /// ("Fragment Explorer") / "Member": nothing previously wrote the local
+    /// identity to Supabase, so reads faithfully propagated the placeholder.
+    /// Callers should pass `ProfileManager.shared.effectiveName`; unresolved
+    /// or empty names are ignored so we never overwrite a real name with a placeholder.
+    @discardableResult
+    public func upsertCurrentUserProfile(displayName: String, avatarStoragePath: String? = nil) async throws -> Bool {
+        let user = try await currentAuthenticatedUser()
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !RoomMember.isUnresolvedDisplayName(trimmed) else {
+            return false
+        }
+        struct UpsertProfileDTO: Encodable, Sendable {
+            let id: UUID
+            let display_name: String
+            let avatar_storage_path: String?
+        }
+        do {
+            try await client
+                .from("profiles")
+                .upsert(UpsertProfileDTO(id: user.id, display_name: trimmed, avatar_storage_path: avatarStoragePath))
+                .execute()
+            return true
+        } catch {
+            throw mapError(error)
+        }
+    }
+
+    /// Central display-name resolution: prefers a real profile name, falls back
+    /// to a local identity name. Users who have not set a username resolve to
+    /// "Unknown" (never a schema default) so downstream repair paths can
+    /// replace it once a real name exists.
+    public static func resolvedMemberDisplayName(profileName: String?, fallbackLocalName: String? = nil) -> String {
+        if let raw = profileName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty, !RoomMember.isUnresolvedDisplayName(raw) {
+            return raw
+        }
+        if let fallback = fallbackLocalName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !fallback.isEmpty, !RoomMember.isUnresolvedDisplayName(fallback) {
+            return fallback
+        }
+        return "Unknown"
+    }
+
     /// Fetches the profile display name and avatar path for a specific user ID.
     public func fetchUserProfile(userID: UUID) async throws -> (displayName: String, avatarStoragePath: String?) {
         _ = try await currentAuthenticatedUser()
@@ -262,7 +309,7 @@ public final class SupabaseRoomRepository: SharedMomentRepository, Sendable {
             if let first = result.first, let name = first.display_name, !name.isEmpty {
                 return (name, first.avatar_storage_path)
             }
-            return ("Member", nil)
+            return ("Unknown", nil)
         } catch {
             throw mapError(error)
         }
@@ -787,7 +834,7 @@ struct DatabaseRoomMember: Decodable, Sendable {
             id: id.uuidString,
             roomId: room_id.uuidString,
             userId: user_id.uuidString,
-            displayName: profiles?.display_name ?? "Member",
+            displayName: SupabaseRoomRepository.resolvedMemberDisplayName(profileName: profiles?.display_name),
             role: memberRole,
             joinedAt: SupabaseRoomRepository.parseISO8601(joined_at),
             avatarAssetURL: avatarURL

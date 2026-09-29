@@ -321,9 +321,46 @@ public struct RoomMembersSheet: View {
         defer { isLoading = false }
 
         if room.backend == .supabase {
-            let fetched = (try? await SupabaseRoomRepository.shared.fetchMembers(roomID: room.id)) ?? []
+            var fetched = (try? await SupabaseRoomRepository.shared.fetchMembers(roomID: room.id)) ?? []
+            // Self-patch: the current user always resolves from local identity so a
+            // DB-default placeholder ("Fragment Explorer"/"Member") never renders for self.
+            // Mirrors the CloudKit branch below; preserves invite flows (read-only mapping).
+            let localEffectiveName = ProfileManager.shared.effectiveName
+            if !RoomMember.isUnresolvedDisplayName(localEffectiveName) {
+                let currentSupabaseID = SupabaseService.shared.currentUserID
+                let currentCloudID = identityService.currentUserIdentity?.id
+                for i in fetched.indices where RoomMember.isUnresolvedDisplayName(fetched[i].displayName) {
+                    let matchesSupabase = currentSupabaseID.map { fetched[i].userId.caseInsensitiveCompare($0) == .orderedSame } ?? false
+                    let matchesCloud = currentCloudID.map { fetched[i].userId == $0 } ?? false
+                    if matchesSupabase || matchesCloud {
+                        fetched[i].displayName = localEffectiveName
+                    }
+                }
+            }
+            fetched.sort {
+                if $0.role == .owner && $1.role != .owner { return true }
+                if $0.role != .owner && $1.role == .owner { return false }
+                return $0.joinedAt < $1.joinedAt
+            }
+            let resolved = fetched
             await MainActor.run {
-                self.members = fetched
+                self.members = resolved
+            }
+            // One-shot backfill for remaining unresolved peers (does not alter invite/share logic).
+            let pending = resolved.filter { RoomMember.isUnresolvedDisplayName($0.displayName) }
+            if !pending.isEmpty {
+                var backfilled = resolved
+                for i in backfilled.indices where RoomMember.isUnresolvedDisplayName(backfilled[i].displayName) {
+                    if let uuid = UUID(uuidString: backfilled[i].userId),
+                       let profile = try? await SupabaseRoomRepository.shared.fetchUserProfile(userID: uuid),
+                       !RoomMember.isUnresolvedDisplayName(profile.displayName) {
+                        backfilled[i].displayName = profile.displayName
+                    }
+                }
+                let final = backfilled
+                await MainActor.run {
+                    self.members = final
+                }
             }
             return
         }
@@ -367,7 +404,7 @@ public struct RoomMembersSheet: View {
 
         // Helper: checks if a name is a placeholder (not a real username/signature)
         func isPlaceholderName(_ name: String) -> Bool {
-            name == "Unknown" || name == "Room Host" || name == "Collaborator" || name == "Member"
+            RoomMember.isUnresolvedDisplayName(name)
         }
 
         // 4. Start from fetched members, ensure current user is present

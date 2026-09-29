@@ -90,10 +90,10 @@ final class CaptureViewModel {
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 return nil
             }
-            return (authorId: supabaseUUID, authorName: ProfileManager.shared.signature)
+            return (authorId: supabaseUUID, authorName: ProfileManager.shared.effectiveName)
         } else {
             let legacyId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
-            return (authorId: legacyId, authorName: ProfileManager.shared.signature)
+            return (authorId: legacyId, authorName: ProfileManager.shared.effectiveName)
         }
     }
 
@@ -126,7 +126,13 @@ final class CaptureViewModel {
                 onCaptureFragment?(sharedFrag.toFragment())
             }
             Task {
-                try? await RoomManager.shared.captureSharedFragment(sharedFrag)
+                do {
+                    try await RoomManager.shared.captureSharedFragment(sharedFrag)
+                } catch {
+                    // Never swallow sync failures: on Supabase error the server row
+                    // is rolled back, so peers would never receive this capture.
+                    print("❌ [Capture] Failed to sync shared fragment \(sharedFrag.id) to room \(room.id): \(error)")
+                }
             }
             return
         }
@@ -193,7 +199,13 @@ final class CaptureViewModel {
                 onCaptureFragment?(sharedFrag.toFragment())
             }
             Task {
-                try? await RoomManager.shared.captureSharedFragment(sharedFrag)
+                do {
+                    try await RoomManager.shared.captureSharedFragment(sharedFrag)
+                } catch {
+                    // Never swallow sync failures: on Supabase error the server row
+                    // is rolled back, so peers would never receive this capture.
+                    print("❌ [Capture] Failed to sync shared fragment \(sharedFrag.id) to room \(room.id): \(error)")
+                }
             }
             return
         }
@@ -247,7 +259,13 @@ final class CaptureViewModel {
                 onCaptureFragment?(sharedFrag.toFragment())
             }
             Task {
-                try? await RoomManager.shared.captureSharedFragment(sharedFrag)
+                do {
+                    try await RoomManager.shared.captureSharedFragment(sharedFrag)
+                } catch {
+                    // Never swallow sync failures: on Supabase error the server row
+                    // is rolled back, so peers would never receive this capture.
+                    print("❌ [Capture] Failed to sync shared fragment \(sharedFrag.id) to room \(room.id): \(error)")
+                }
             }
             return
         }
@@ -309,7 +327,13 @@ final class CaptureViewModel {
                 onCaptureFragment?(sharedFrag.toFragment())
             }
             Task {
-                try? await RoomManager.shared.captureSharedFragment(sharedFrag)
+                do {
+                    try await RoomManager.shared.captureSharedFragment(sharedFrag)
+                } catch {
+                    // Never swallow sync failures: on Supabase error the server row
+                    // is rolled back, so peers would never receive this capture.
+                    print("❌ [Capture] Failed to sync shared fragment \(sharedFrag.id) to room \(room.id): \(error)")
+                }
             }
             return
         }

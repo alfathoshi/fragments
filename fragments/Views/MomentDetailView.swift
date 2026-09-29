@@ -133,6 +133,20 @@ public struct MomentDetailView: View {
             if let fragment = selectedFragment {
                 FragmentDetailView(
                     fragment: fragment,
+//                    onDelete: collection.isShared ? nil : { _ in
+//                        // Remove from local moment
+//                        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
+//                            selectedFragment = nil
+//                        }
+//                        viewModel.deleteItem(withID: fragment.id)
+//                    },
+                    isSavedToMoment: true,
+                    authorName: collection.isShared
+                        ? RoomManager.shared.authorName(
+                            forFragmentID: fragment.id.uuidString,
+                            roomID: collection.roomID
+                        )
+                        : nil,
                     onDismiss: {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
                             selectedFragment = nil
@@ -204,14 +218,14 @@ public struct MomentDetailView: View {
                     .accessibilityLabel(viewMode == .grid ? "Switch to Sphere View" : "Switch to Grid View")
 
                     // Share button: 9:16 screenshot without toolbar chrome
-                    Button {
-                        takeShareScreenshot()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.primary)
-                    }
-                    .accessibilityLabel("Share Moment")
+//                    Button {
+//                        takeShareScreenshot()
+//                    } label: {
+//                        Image(systemName: "square.and.arrow.up")
+//                            .font(.system(size: 15, weight: .semibold))
+//                            .foregroundStyle(Color.primary)
+//                    }
+//                    .accessibilityLabel("Share Moment")
                 }
 
                 if viewModel.hasReordered {
@@ -434,6 +448,14 @@ public struct MomentDetailView: View {
                             gutter: gutter,
                             horizontalMargin: horizontalMargin
                         )
+                    },
+                    onTap: {
+                        guard viewModel.draggedItemID == nil else { return }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        viewModel.stopAudio()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                            selectedFragment = item.toFragment()
+                        }
                     }
                 )
             )
@@ -834,6 +856,7 @@ struct LongPressDragGestureModifier: UIViewRepresentable {
     var onBegan: () -> Void
     var onChanged: (CGSize) -> Void
     var onEnded: () -> Void
+    var onTap: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> LongPressDragUIView {
         let view = LongPressDragUIView()
@@ -841,6 +864,7 @@ struct LongPressDragGestureModifier: UIViewRepresentable {
         view.onBegan = onBegan
         view.onChanged = onChanged
         view.onEnded = onEnded
+        view.onTap = onTap
         return view
     }
 
@@ -849,6 +873,7 @@ struct LongPressDragGestureModifier: UIViewRepresentable {
         uiView.onBegan = onBegan
         uiView.onChanged = onChanged
         uiView.onEnded = onEnded
+        uiView.onTap = onTap
     }
 }
 
@@ -857,6 +882,7 @@ final class LongPressDragUIView: UIView, UIGestureRecognizerDelegate {
     var onBegan: (() -> Void)?
     var onChanged: ((CGSize) -> Void)?
     var onEnded: (() -> Void)?
+    var onTap: (() -> Void)?
 
     private var initialTouchPoint: CGPoint = .zero
 
@@ -869,11 +895,20 @@ final class LongPressDragUIView: UIView, UIGestureRecognizerDelegate {
         return r
     }()
 
+    private lazy var tapRecognizer: UITapGestureRecognizer = {
+        let r = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        r.delegate = self
+        r.cancelsTouchesInView = false
+        return r
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         isUserInteractionEnabled = true
         addGestureRecognizer(recognizer)
+        addGestureRecognizer(tapRecognizer)
+        tapRecognizer.require(toFail: recognizer)
     }
 
     required init?(coder: NSCoder) {
@@ -893,7 +928,16 @@ final class LongPressDragUIView: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        if gestureRecognizer == tapRecognizer {
+            return false
+        }
         return true
+    }
+
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        if gesture.state == .ended {
+            onTap?()
+        }
     }
 
     @objc private func handleGesture(_ gesture: UILongPressGestureRecognizer) {

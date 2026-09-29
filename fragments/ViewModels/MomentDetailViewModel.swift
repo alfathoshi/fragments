@@ -89,6 +89,16 @@ final class MomentDetailViewModel {
         }
     }
 
+    /// Removes a fragment by ID from the moment and persists the change.
+    func deleteItem(withID id: UUID) {
+        items.removeAll { $0.id == id }
+        originalItems = items
+        var updated = collection
+        updated.items = items
+        onUpdateCollection?(updated)
+        MomentManager.shared.updateMomentItems(id: collection.id, items: items)
+    }
+
     func saveCurrentLayout() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         var updated = collection

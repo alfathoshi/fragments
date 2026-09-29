@@ -234,7 +234,7 @@ extension Fragment {
             }
             return UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
         }()
-        let resolvedAuthorName = authorName ?? ProfileManager.shared.signature
+        let resolvedAuthorName = authorName ?? ProfileManager.shared.effectiveName
 
         let mediaRef: SharedMediaReference? = {
             if let resolvedURL = self.mediaURL {

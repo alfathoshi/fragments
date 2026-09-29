@@ -68,6 +68,13 @@ struct fragmentsApp: App {
         }
         print("=== RESULT (PHASE 2A): \(passed4 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
 
+        let (passed12, logs12) = MemberDisplayNameAndDiscardVerifier.runAllTests()
+        print("=== MEMBER DISPLAY NAME + DISCARD REGRESSION VERIFICATION (BUG 1 & 2) ===")
+        for log in logs12 {
+            print(log)
+        }
+        print("=== RESULT (BUG 1 & 2): \(passed12 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
+
         Task {
             let (passed5, logs5) = await SupabaseRepositoryVerifier.runAllTests()
             print("=== SUPABASE REPOSITORY VERIFICATION (PHASE 2B) ===")
@@ -119,7 +126,7 @@ struct fragmentsApp: App {
             print("=== RESULT (COLLABORATIVE P0): \(passed11 ? "ALL TESTS PASSED ✅" : "SOME TESTS FAILED ❌") ===")
         }
 
-        let allLogs = (logs1 + logs2 + logs3 + logs4).joined(separator: "\n")
+        let allLogs = (logs1 + logs2 + logs3 + logs4 + logs12).joined(separator: "\n")
         let logPath = NSTemporaryDirectory() + "fragments_verification.log"
         try? allLogs.write(toFile: logPath, atomically: true, encoding: .utf8)
         #endif

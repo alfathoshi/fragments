@@ -109,6 +109,8 @@ final class ActiveMomentViewModel {
         } else {
             momentManager.startRemoteSyncObserver(roomID: room.id)
         }
+        // Retry any missing remote media each time the live view appears.
+        momentManager.backfillMissingSessionMedia()
     }
 
     func stopSyncObserver() {

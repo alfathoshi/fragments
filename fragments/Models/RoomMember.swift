@@ -77,4 +77,16 @@ public struct RoomMember: Identifiable, Hashable, Sendable, Codable {
         self.joinedAt = joinedAt
         self.avatarAssetURL = avatarAssetURL
     }
+
+    /// Names that are schema/UI placeholders rather than a real profile or signature.
+    public static func isUnresolvedDisplayName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        switch trimmed.lowercased() {
+        case "member", "fragment explorer", "unknown", "room host", "collaborator":
+            return true
+        default:
+            return false
+        }
+    }
 }

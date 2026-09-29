@@ -144,6 +144,14 @@ public final class SupabaseService {
         self.isAuthenticated = session != nil
         if let user = session?.user {
             self.authState = .signedIn(user)
+            // Ensure the Supabase profile row carries the local display name so
+            // member lists resolve instead of showing the DB default placeholder.
+            let localName = ProfileManager.shared.effectiveName
+            if !RoomMember.isUnresolvedDisplayName(localName) {
+                Task {
+                    try? await SupabaseRoomRepository.shared.upsertCurrentUserProfile(displayName: localName)
+                }
+            }
         } else if isLoading {
             self.authState = .signingIn
         } else {

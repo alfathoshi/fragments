@@ -14,6 +14,10 @@ public struct FragmentDetailView: View {
     public var onAddToMoment: ((Fragment, String) -> Void)? = nil
     public var onDelete: ((Fragment) -> Void)? = nil
     public var onDismiss: () -> Void
+    /// True when the fragment belongs to a saved Moment (hides 24h countdown, enables Delete).
+    public var isSavedToMoment: Bool = false
+    /// Display name of the person who captured this fragment (shown in shared moments).
+    public var authorName: String? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var preloadedImage: UIImage? = nil
@@ -22,9 +26,6 @@ public struct FragmentDetailView: View {
     @State private var audioPlaybackProgress: Double = 0.0
     @State private var playbackTimer: Timer? = nil
     @State private var showShareSheet: Bool = false
-    @State private var showShareToRoomSheet: Bool = false
-    @State private var showAuthRequiredAlert: Bool = false
-    @State private var shareSuccessToast: String? = nil
     @State private var showDeleteConfirmation: Bool = false
 
     // Real Media Players
@@ -35,11 +36,15 @@ public struct FragmentDetailView: View {
         fragment: Fragment,
         onAddToMoment: ((Fragment, String) -> Void)? = nil,
         onDelete: ((Fragment) -> Void)? = nil,
+        isSavedToMoment: Bool = false,
+        authorName: String? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.fragment = fragment
         self.onAddToMoment = onAddToMoment
         self.onDelete = onDelete
+        self.isSavedToMoment = isSavedToMoment
+        self.authorName = authorName
         self.onDismiss = onDismiss
 
         if fragment.type == .photo {
@@ -90,48 +95,10 @@ public struct FragmentDetailView: View {
                         removal: .move(edge: .bottom).combined(with: .opacity)
                     )
                 )
-            // Top Success Toast Overlay
-            if let toast = shareSuccessToast {
-                VStack {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.system(size: 16, weight: .bold))
-
-                        Text(toast)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.primary)
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
-                    .padding(.top, 60)
-                    Spacer()
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
         }
         .ignoresSafeArea()
         .sheet(isPresented: $showShareSheet) {
             ShareSheet(activityItems: [fragment.title, fragment.text ?? ""])
-        }
-        .sheet(isPresented: $showShareToRoomSheet) {
-            ShareToRoomSheet(fragment: fragment) { sharedRoom in
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                    shareSuccessToast = "Shared to \(sharedRoom.name)"
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                    withAnimation {
-                        shareSuccessToast = nil
-                    }
-                }
-            }
-        }
-        .alert("Sign-In Required", isPresented: $showAuthRequiredAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("You must be signed in with your account to share fragments into collaborative rooms.")
         }
         .alert("Delete Fragment?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -140,7 +107,7 @@ public struct FragmentDetailView: View {
                 onDismiss()
             }
         } message: {
-            Text("Are you sure you want to remove this fragment from your floating space?")
+            Text("Are you sure you want to remove this fragment?")
         }
         .onAppear {
             if fragment.type == .video {
@@ -618,16 +585,26 @@ public struct FragmentDetailView: View {
                 }
             }
 
-            // Metadata Row (Timestamp, 24h Expiration, & Location)
+            // Metadata Row
             HStack(spacing: 12) {
-
-                HStack(spacing: 4) {
-                    Image(systemName: "hourglass")
-                        .font(.system(size: 11))
-                    Text(fragment.timeRemainingText)
-                        .font(.system(size: 12, weight: .medium))
+                // Show countdown only for standalone fragments (not yet saved to a moment)
+                if !isSavedToMoment {
+                    HStack(spacing: 4) {
+                        Image(systemName: "hourglass")
+                            .font(.system(size: 11))
+                        Text(fragment.timeRemainingText)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 11))
+                        Text(fragment.relativeTimeText)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.secondary)
 
                 if let loc = fragment.location, !loc.isEmpty {
                     HStack(spacing: 5) {
@@ -642,45 +619,31 @@ public struct FragmentDetailView: View {
                 Spacer()
             }
 
-            // Actions (Share to Room, System Share, & Delete)
-            VStack(spacing: 8) {
-                // Primary Action: Share to Collaborative Room
-                Button {
-                    handleShareToRoomTapped()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 14, weight: .bold))
-                        Text("Share to Room")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.purple.opacity(0.15))
-                    )
-                    .foregroundStyle(Color.purple)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.purple.opacity(0.28), lineWidth: 1)
-                    )
+            // "Captured by" row — shown only when viewing a shared moment fragment
+            if let author = authorName, !author.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Captured by \(author)")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
                 }
+                .foregroundStyle(.secondary)
+            }
 
-                // Secondary Actions (Share & Delete)
-                HStack(spacing: 12) {
+            // Actions (Share & Delete)
+            HStack(spacing: 12) {
+//                Button {
+//                    showShareSheet = true
+//                } label: {
+//                    secondaryButtonLabel(icon: "square.and.arrow.up", title: "Share")
+//                }
+
+                if onDelete != nil {
                     Button {
-                        showShareSheet = true
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        showDeleteConfirmation = true
                     } label: {
-                        secondaryButtonLabel(icon: "square.and.arrow.up", title: "Share")
-                    }
-
-                    if onDelete != nil {
-                        Button {
-                            showDeleteConfirmation = true
-                        } label: {
-                            secondaryButtonLabel(icon: "trash", title: "Delete", isDestructive: true)
-                        }
+                        secondaryButtonLabel(icon: "trash", title: "Delete", isDestructive: true)
                     }
                 }
             }
@@ -692,15 +655,6 @@ public struct FragmentDetailView: View {
             // Absorb taps on bottom card so it doesn't dismiss
         }
         .adaptiveGlassEffect(.regular, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-    }
-
-    private func handleShareToRoomTapped() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        if SupabaseService.shared.isAuthenticated && UserIdentityService.shared.collaborativeUserID != nil {
-            showShareToRoomSheet = true
-        } else {
-            showAuthRequiredAlert = true
-        }
     }
 
     private func secondaryButtonLabel(icon: String, title: String, isDestructive: Bool = false) -> some View {

@@ -408,8 +408,8 @@ final class MomentManager {
         startSession(location: resolvedLocation, isShared: true, room: optimisticRoom)
 
         // 2. Start zero-config local P2P sync as Host with the shared session start date
-        let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
-        let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+        let currentId = UserIdentityService.shared.collaborativeUserID ?? UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        let currentName = ProfileManager.shared.effectiveName
         let hostMember = RoomMember(
             roomId: roomId,
             userId: currentId,
@@ -434,6 +434,9 @@ final class MomentManager {
                     backend: .supabase
                 ) {
                     await MainActor.run {
+                        // Discard guard: if the session was cancelled while provisioning,
+                        // do not re-attach a ghost room (suppression is synchronous in cancelSession).
+                        guard !RoomManager.shared.locallyRemovedRoomIDs.contains(roomId.lowercased()) else { return }
                         if var current = self.activeSession, current.isShared, current.room?.id == roomId {
                             current.room = provisionedRoom
                             self.activeSession = current
@@ -453,6 +456,7 @@ final class MomentManager {
                     backend: .cloudKit
                 ) {
                     await MainActor.run {
+                        guard !RoomManager.shared.locallyRemovedRoomIDs.contains(roomId.lowercased()) else { return }
                         if var current = self.activeSession, current.isShared, current.room?.id == roomId {
                             current.room = provisionedRoom
                             self.activeSession = current
@@ -488,8 +492,8 @@ final class MomentManager {
         startLiveActivity(session: session)
 
         // 1. Start zero-config local P2P sync as Joiner
-        let currentId = UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
-        let currentName = UserIdentityService.shared.currentUserIdentity?.displayName ?? ProfileManager.shared.signature
+        let currentId = UserIdentityService.shared.collaborativeUserID ?? UserIdentityService.shared.currentUserIdentity?.id ?? "local_user"
+        let currentName = ProfileManager.shared.effectiveName
         let member = RoomMember(
             roomId: room.id,
             userId: currentId,
@@ -525,6 +529,9 @@ final class MomentManager {
                         self.updateLiveActivity(session: current)
                         print("📥 [MomentManager] Reconciled \(rmFragments.count) fragments from Supabase into active session")
                     }
+                    // Fetched rows carry remote storage paths but no local files;
+                    // trigger downloads so joiners see media, not blank cards.
+                    self.backfillMissingSessionMedia()
                 }
             }
         } else {
@@ -818,6 +825,49 @@ final class MomentManager {
         current.fragments[idx].mediaResourceName = localURL.path
         self.activeSession = current
         self.persistSession(current)
+    }
+
+    /// Downloads remote media for session fragments that reference a remote
+    /// storage path but have no local file yet.
+    ///
+    /// Root-cause fix for "media not live on other devices" for joiners: rows
+    /// reconciled mid-session via fetch (`joinSharedSession`, `loadRoomDetails`)
+    /// arrive with `mediaReference.storagePath` but `toFragment()` can only use
+    /// the disk cache — no download is ever triggered on that path, unlike the
+    /// realtime path. This pass closes the gap; it no-ops when nothing is missing.
+    func backfillMissingSessionMedia() {
+        guard let current = activeSession, current.isShared, let room = current.room else { return }
+        let roomID = room.id
+        let remoteByID = Dictionary(
+            uniqueKeysWithValues: RoomManager.shared.fragments.compactMap { shared -> (String, SharedMediaReference)? in
+                guard let ref = shared.mediaReference,
+                      let path = ref.storagePath, !path.isEmpty else { return nil }
+                return (shared.id, ref)
+            }
+        )
+        let missing = current.fragments.filter { frag in
+            guard remoteByID[frag.id.uuidString] != nil else { return false }
+            guard let local = frag.mediaResourceName, !local.isEmpty,
+                  FileManager.default.fileExists(atPath: local) else { return true }
+            return false
+        }
+        guard !missing.isEmpty else { return }
+        print("🖼️ [MomentManager] Backfilling media for \(missing.count) fragment(s) in room: \(roomID)")
+        Task { [weak self] in
+            for frag in missing {
+                guard let ref = await MainActor.run(resultType: SharedMediaReference?.self, body: {
+                    RoomManager.shared.fragments.first(where: { $0.id == frag.id.uuidString })?.mediaReference
+                }), ref.storagePath != nil else { continue }
+                do {
+                    let downloadedURL = try await RemoteMediaService.shared.localMediaURL(for: ref, roomID: roomID)
+                    await MainActor.run {
+                        self?.attachLocalMedia(localURL: downloadedURL, fragmentID: frag.id.uuidString, roomID: roomID)
+                    }
+                } catch {
+                    print("⚠️ [MomentManager] Media backfill failed for fragment \(frag.id): \(error)")
+                }
+            }
+        }
     }
 
     private func handleRealtimeFragmentCreated(_ sharedFrag: SharedFragment) {
@@ -1228,6 +1278,20 @@ final class MomentManager {
     func cancelSession() {
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         let sessionToCancel = activeSession
+        // Synchronously suppress the discarded room BEFORE publishing
+        // `activeSession = nil`. MomentsView synthesizes visible moments from
+        // (collections + rooms − activeRoomID − suppressed). Previously the room
+        // was removed only inside an async `deleteRoom` Task, so the frame where
+        // activeSession was already nil but `rooms` still contained the room let
+        // a discarded moment flash in MomentsView. Suppression first closes that window.
+        // Never inserts into `collections`/SwiftData here — discard must not save.
+        if let session = sessionToCancel, session.isShared, let room = session.room {
+            if room.isCurrentUserOwner {
+                RoomManager.shared.removeRoomFromLocalState(id: room.id)
+            } else if RoomManager.shared.currentRoom?.id == room.id {
+                RoomManager.shared.currentRoom = nil
+            }
+        }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
             activeSession = nil
             showEndMomentSheet = false

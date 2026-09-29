@@ -137,6 +137,12 @@ struct ActiveMomentView: View {
                     onDelete: { fragmentToDelete in
                         viewModel.deleteFragmentFromSession(fragmentToDelete)
                     },
+                    authorName: viewModel.session?.isShared == true
+                        ? RoomManager.shared.authorName(
+                            forFragmentID: frag.id.uuidString,
+                            roomID: viewModel.session?.room?.id
+                        )
+                        : nil,
                     onDismiss: {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
                             viewModel.dismissSelectedFragment()
