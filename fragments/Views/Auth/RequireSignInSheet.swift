@@ -30,7 +30,7 @@ public struct RequireSignInSheet: View {
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
+            VStack(spacing: 12) {
                 Spacer(minLength: 12)
 
                 ZStack {
@@ -48,25 +48,13 @@ public struct RequireSignInSheet: View {
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.center)
 
-                    Text("Shared Moments need an account so we can keep your identity, memories, and room membership connected.")
+                    Text("An account helps keep your identity, memories, and shared moments connected")
                         .font(.system(size: 14, weight: .regular, design: .rounded))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 12)
                 }
 
-                if let errorMessage {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13))
-                        Text(errorMessage)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
 
                 Spacer()
 
@@ -110,11 +98,9 @@ public struct RequireSignInSheet: View {
                 .disabled(signInCoordinator.isSigningIn)
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 20)
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.height(350)])
         .presentationDragIndicator(.visible)
-        .presentationCornerRadius(28)
     }
 
     private func handleSignIn() {
