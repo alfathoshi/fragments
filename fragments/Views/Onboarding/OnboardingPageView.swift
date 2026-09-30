@@ -41,32 +41,43 @@ struct OnboardingPageView: View {
     var isActive: Bool = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-                .frame(height: 80)
+        GeometryReader { geo in
+            // Scale the fixed 380pt illustration canvas to fit the available
+            // page height. Reserving ~130pt for text + spacers, the rest is
+            // illustration budget — clamped so offsets/rotations shrink
+            // together instead of clipping on short screens (SE / Duo).
+            let rawScale = (geo.size.height - 130) / 380
+            let scale = min(1.0, max(0.58, rawScale))
+            let illustrationHeight = 380 * scale
 
-            // Illustration area
-            illustration
-                .frame(height: 380)
+            VStack(spacing: 0) {
+                Spacer(minLength: 8)
 
-            Spacer()
+                // Illustration area — uniformly scaled canvas
+                illustration
+                    .frame(height: 380)
+                    .scaleEffect(scale, anchor: .center)
+                    .frame(height: illustrationHeight)
 
-            // Text content
-            VStack(spacing: 8) {
-                Text(page.title)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
 
-                Text(page.subtitle)
-                    .font(.system(size: 12, weight: .regular, design: .rounded))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
+                // Text content
+                VStack(spacing: 8) {
+                    Text(page.title)
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.primary)
+
+                    Text(page.subtitle)
+                        .font(.system(size: 12, weight: .regular, design: .rounded))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 40)
+
+                Spacer(minLength: 8)
             }
-            .padding(.horizontal, 40)
-
-            Spacer()
-                .frame(height: 40)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
     }
 

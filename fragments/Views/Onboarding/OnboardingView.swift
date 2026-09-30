@@ -64,39 +64,46 @@ struct OnboardingView: View {
             Color(uiColor: .systemBackground)
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                // Swipeable page content
-                TabView(selection: $currentPage) {
-                    ForEach(pages) { page in
-                        OnboardingPageView(page: page, isActive: currentPage == page.id)
-                            .tag(page.id)
+            GeometryReader { geo in
+                // Compact-height mode for short screens (iPhone SE / Duo).
+                let isCompact = geo.size.height < 700
+                let bottomInset = geo.safeAreaInsets.bottom
 
+                VStack(spacing: 0) {
+                    // Swipeable page content — no ignoresSafeArea here so
+                    // pages stay clear of the notch/status bar.
+                    TabView(selection: $currentPage) {
+                        ForEach(pages) { page in
+                            OnboardingPageView(page: page, isActive: currentPage == page.id)
+                                .tag(page.id)
+                                .scaleEffect(0.9)
+
+                        }
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .animation(.easeInOut(duration: 0.3), value: currentPage)
+
+                    // Page indicator dots
+                    pageIndicator
+                        .padding(.bottom, 20)
+
+                    // Authentication choice: Apple (primary) or Guest (secondary).
+                    // Guest Mode is a legitimate supported mode, not a skipped step.
+                    continueWithAppleButton(isCompact: isCompact)
+                        .padding(.horizontal, 20)
+
+                    HStack(spacing: 12) {
+                        Text("or")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 40)
+                    .padding(.vertical,  12)
+
+                    continueAsGuestButton
+                        .padding(.horizontal, 20)
                 }
-                .ignoresSafeArea()
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .animation(.easeInOut(duration: 0.3), value: currentPage)
-
-                // Page indicator dots
-                pageIndicator
-                    .padding(.bottom, 20)
-
-                // Authentication choice: Apple (primary) or Guest (secondary).
-                // Guest Mode is a legitimate supported mode, not a skipped step.
-                continueWithAppleButton
-                    .padding(.horizontal, 20)
-
-                HStack(spacing: 12) {
-                    Text("or")
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 40)
-                .padding(.vertical, 12)
-
-                continueAsGuestButton
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                .frame(width: geo.size.width, height: geo.size.height)
             }
         }
         .ignoresSafeArea(edges: [.top, .horizontal])
@@ -120,7 +127,7 @@ struct OnboardingView: View {
 
     // MARK: - Continue with Apple Button (glassProminent style with primary tint)
 
-    private var continueWithAppleButton: some View {
+    private func continueWithAppleButton(isCompact: Bool) -> some View {
         Button {
             handleSignIn()
         } label: {
@@ -132,7 +139,7 @@ struct OnboardingView: View {
             }
             .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
+            .padding(.vertical, isCompact ? 12 : 16)
         }
         .tint(.primary)
         .glassProminentButtonStyle()

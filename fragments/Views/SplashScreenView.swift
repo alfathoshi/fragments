@@ -38,7 +38,7 @@ public struct SplashScreenView: View {
                             .font(.system(size: 32, weight: .bold, design: .rounded))
                             .foregroundStyle(.primary)
 
-                        Text("Capture a Moment")
+                        Text("Capture the Moment")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
