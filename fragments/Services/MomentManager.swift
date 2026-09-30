@@ -548,7 +548,10 @@ final class MomentManager {
         let roomId = UUID().uuidString
         let sessionStartDate = Date()
 
-        let optimisticCode = String(roomId.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
+        // NOTE (join-code security): the join credential is a server-generated
+        // CSPRNG value returned by create_room_with_owner. It is NEVER derived
+        // from roomId client-side. The optimistic room therefore carries no
+        // code until provisioning completes and swaps in the provisioned room.
         let creatorId: String = {
             if SupabaseService.shared.isAuthenticated, let sbUserId = SupabaseService.shared.currentUserID {
                 return sbUserId
@@ -561,7 +564,7 @@ final class MomentManager {
             emoji: "✨",
             createdAt: sessionStartDate,
             createdBy: creatorId,
-            shareRecordID: optimisticCode,
+            shareRecordID: nil,
             zoneName: SupabaseService.shared.isAuthenticated ? "supabase" : nil
         )
 

@@ -29,15 +29,23 @@ create unique index if not exists profiles_username_unique
 -- Availability check that reveals nothing except a boolean.
 -- Runs with the owner's privileges, so no profiles SELECT policy change is
 -- required for other users' rows.
+--
+-- ALIGNMENT NOTE (2026-10-01): the deployed dev implementation normalizes its
+-- input with lower(trim(...)) — an out-of-band hardening consistent with the
+-- normalization contract above. This file was aligned to that deployed body so
+-- the migration record matches reality; behavior for all app flows (which
+-- always pass normalized input) is unchanged.
 create or replace function public.is_username_available(p_username text)
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = public
 as $$
-  select not exists (
-    select 1 from public.profiles where username = p_username
+begin
+  return not exists (
+    select 1 from public.profiles where username = lower(trim(p_username))
   );
+end;
 $$;
 
 -- NOTE: username writes go through the SAME own-row upsert policy that

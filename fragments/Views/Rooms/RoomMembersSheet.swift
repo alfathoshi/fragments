@@ -137,7 +137,7 @@ public struct RoomMembersSheet: View {
 
                             Spacer()
 
-                            Text(room.backend == .supabase ? (room.shareRecordID ?? String(room.id.prefix(6))) : String(room.id.prefix(8)))
+                            Text(room.backend == .supabase ? (room.shareRecordID ?? "—") : String(room.id.prefix(8)))
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
@@ -234,9 +234,16 @@ public struct RoomMembersSheet: View {
 
     private var effectiveShareURL: URL {
         if room.backend == .supabase {
-            let code = room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
+            // Credential link only when a server-assigned code exists. Otherwise
+            // fall back to a non-credential id link (navigation only; the id
+            // path never authorizes Supabase membership — see joinRoomDirect).
+            if let code = room.shareRecordID, !code.isEmpty {
+                let encodedName = room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                return URL(string: "fragments://room/join?code=\(code)&name=\(encodedName)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
+            }
             let encodedName = room.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            return URL(string: "fragments://room/join?code=\(code)&name=\(encodedName)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
+            let createdTimestamp = room.createdAt.timeIntervalSince1970
+            return URL(string: "fragments://room/join?id=\(room.id)&name=\(encodedName)&createdAt=\(createdTimestamp)") ?? URL(string: "fragments://room/join?id=\(room.id)")!
         }
         if let url = resolvedShareURL ?? activeShare?.url {
             return url
@@ -248,8 +255,10 @@ public struct RoomMembersSheet: View {
 
     private var shareActivityItems: [Any] {
         if room.backend == .supabase {
-            let code = room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
-            return ["Join my shared moment \"\(room.name)\" on Fragments using room code: \(code)\n\(effectiveShareURL.absoluteString)"]
+            if let code = room.shareRecordID, !code.isEmpty {
+                return ["Join my shared moment \"\(room.name)\" on Fragments using room code: \(code)\n\(effectiveShareURL.absoluteString)"]
+            }
+            return [effectiveShareURL]
         }
         return [effectiveShareURL]
     }
@@ -302,7 +311,9 @@ public struct RoomMembersSheet: View {
     }
 
     private func handleCopyCode() {
-        let codeToCopy = room.backend == .supabase ? (room.shareRecordID ?? String(room.id.prefix(6))) : room.id
+        // Never derive a code from room.id. Without a server-assigned code
+        // there is nothing credential-like to copy.
+        let codeToCopy = room.backend == .supabase ? (room.shareRecordID ?? "—") : room.id
         UIPasteboard.general.string = codeToCopy
         withAnimation(.easeInOut(duration: 0.2)) {
             copiedCode = true

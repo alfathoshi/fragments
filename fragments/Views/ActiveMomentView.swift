@@ -308,35 +308,66 @@ struct ActiveMomentView: View {
             }
 
             if session.isShared, let room = session.room {
-                // Quick Room Code Tap-to-Copy Pill
-                let shortCode = room.backend == .supabase
-                    ? (room.shareRecordID ?? String(room.id.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased())
-                    : String(room.id.prefix(8)).uppercased()
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    UIPasteboard.general.string = shortCode
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                        copiedCodeFeedback = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            copiedCodeFeedback = false
+                // Join credential is server-assigned (Room.shareRecordID). Never
+                // fall back to a room-ID-derived value: knowing room_id must not
+                // reveal the join code. Supabase pill renders only when a real
+                // code exists; CloudKit keeps its existing prefix(8) lookup tag.
+                if room.backend == .supabase {
+                    if let code = room.shareRecordID, !code.isEmpty {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            UIPasteboard.general.string = code
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                copiedCodeFeedback = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    copiedCodeFeedback = false
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: copiedCodeFeedback ? "checkmark.circle.fill" : "number")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(copiedCodeFeedback ? .green : .secondary)
+                                Text(copiedCodeFeedback ? "Copied" : code)
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(copiedCodeFeedback ? .green : .primary)
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
                         }
+                        .buttonStyle(.plain)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: copiedCodeFeedback ? "checkmark.circle.fill" : "number")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(copiedCodeFeedback ? .green : .secondary)
-                        Text(copiedCodeFeedback ? "Copied" : shortCode)
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundStyle(copiedCodeFeedback ? .green : .primary)
+                } else {
+                    let shortCode = String(room.id.prefix(8)).uppercased()
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        UIPasteboard.general.string = shortCode
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            copiedCodeFeedback = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                copiedCodeFeedback = false
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: copiedCodeFeedback ? "checkmark.circle.fill" : "number")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(copiedCodeFeedback ? .green : .secondary)
+                            Text(copiedCodeFeedback ? "Copied" : shortCode)
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(copiedCodeFeedback ? .green : .primary)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
                     }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
             Spacer()
