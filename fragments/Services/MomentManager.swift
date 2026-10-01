@@ -777,12 +777,68 @@ final class MomentManager {
             MultipeerSyncService.shared.broadcastFragment(sharedFrag)
 
             // 2. Dual-sync to CloudKit & Public Cloud Relay
-            if !RoomManager.shared.fragments.contains(where: { $0.id == newFragment.id.uuidString }) {
+            if !RoomManager.shared.fragments.contains(where: { $0.id.lowercased() == newFragment.id.uuidString.lowercased() }) {
                 Task {
                     try? await RoomManager.shared.captureSharedFragment(sharedFrag)
                 }
             }
         }
+    }
+
+    /// Converts session `Fragment`s back to `SharedFragment`s without losing authorship.
+    ///
+    /// `Fragment` (sphere/session UI) drops `authorId`/`authorName` at conversion
+    /// time, so a naive `toSharedFragment(roomId:)` re-stamps every fragment with
+    /// the current user — making "Captured by" show my username on someone else's
+    /// fragment once the poisoned rows reach `LocalRoomCache`.
+    /// This helper restores the authoritative author from `RoomManager.fragments`
+    /// first (Supabase fetch / Realtime, correct by construction), then from the
+    /// existing disk cache, and only falls back to the current user for genuinely
+    /// new local fragments. `knownAuthors` lets callers inject authorship that is
+    /// not yet in either store (e.g. a just-received Multipeer fragment).
+    func sharedFragmentsPreservingAuthorship(
+        from fragments: [Fragment],
+        roomId: String,
+        knownAuthors: [String: (authorId: String, authorName: String)] = [:]
+    ) -> [SharedFragment] {
+        var authoritative: [String: (authorId: String, authorName: String)] = [:]
+        for shared in RoomManager.shared.fragments where shared.roomId == roomId {
+            authoritative[shared.id.lowercased()] = (shared.authorId, shared.authorName)
+        }
+        let cachedLookup: [String: (authorId: String, authorName: String)] = {
+            guard let cached = try? LocalRoomCache.shared.loadFragments(roomID: roomId) else { return [:] }
+            var map: [String: (authorId: String, authorName: String)] = [:]
+            for shared in cached {
+                map[shared.id.lowercased()] = (shared.authorId, shared.authorName)
+            }
+            return map
+        }()
+        let knownLowercased: [String: (authorId: String, authorName: String)] = Dictionary(
+            uniqueKeysWithValues: knownAuthors.map { ($0.key.lowercased(), $0.value) }
+        )
+        return fragments.map { frag in
+            let key = frag.id.uuidString.lowercased()
+            if let known = knownLowercased[key] {
+                return frag.toSharedFragment(roomId: roomId, authorId: known.authorId, authorName: known.authorName)
+            }
+            if let auth = authoritative[key] {
+                return frag.toSharedFragment(roomId: roomId, authorId: auth.authorId, authorName: auth.authorName)
+            }
+            if let cached = cachedLookup[key] {
+                return frag.toSharedFragment(roomId: roomId, authorId: cached.authorId, authorName: cached.authorName)
+            }
+            return frag.toSharedFragment(roomId: roomId)
+        }
+    }
+
+    /// Persists session fragments to the room disk cache without clobbering authorship.
+    func persistSessionFragmentsPreservingAuthorship(
+        _ fragments: [Fragment],
+        roomId: String,
+        knownAuthors: [String: (authorId: String, authorName: String)] = [:]
+    ) {
+        let shared = sharedFragmentsPreservingAuthorship(from: fragments, roomId: roomId, knownAuthors: knownAuthors)
+        try? LocalRoomCache.shared.saveFragments(shared, roomID: roomId)
     }
 
     // MARK: - Multipeer Connectivity Integration
@@ -809,7 +865,8 @@ final class MomentManager {
                 self.updateLiveActivity(session: current)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 if let room = current.room {
-                    try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+                    let known = [sharedFrag.id: (authorId: sharedFrag.authorId, authorName: sharedFrag.authorName)]
+                    self.persistSessionFragmentsPreservingAuthorship(current.fragments, roomId: room.id, knownAuthors: known)
                 }
             }
         }
@@ -826,7 +883,7 @@ final class MomentManager {
 
         MultipeerSyncService.shared.onSyncRequest = { [weak self] in
             guard let self = self, let session = self.activeSession, let room = session.room else { return [] }
-            return session.fragments.map { $0.toSharedFragment(roomId: room.id) }
+            return self.sharedFragmentsPreservingAuthorship(from: session.fragments, roomId: room.id)
         }
 
         MultipeerSyncService.shared.onSessionEnded = { [weak self] finalTitle, finalCategory in
@@ -916,7 +973,7 @@ final class MomentManager {
                             self.updateLiveActivity(session: session)
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             if let room = session.room {
-                                try? LocalRoomCache.shared.saveFragments(session.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+                                self.persistSessionFragmentsPreservingAuthorship(session.fragments, roomId: room.id)
                             }
                         }
                     }
@@ -1292,7 +1349,7 @@ final class MomentManager {
         }
 
         if let room = current.room {
-            try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+            self.persistSessionFragmentsPreservingAuthorship(current.fragments, roomId: room.id, knownAuthors: [sharedFrag.id: (authorId: sharedFrag.authorId, authorName: sharedFrag.authorName)])
         }
     }
 
@@ -1338,7 +1395,7 @@ final class MomentManager {
         self.updateLiveActivity(session: current)
 
         if let room = current.room {
-            try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+            self.persistSessionFragmentsPreservingAuthorship(current.fragments, roomId: room.id, knownAuthors: [sharedFrag.id: (authorId: sharedFrag.authorId, authorName: sharedFrag.authorName)])
         }
     }
 
@@ -1365,7 +1422,7 @@ final class MomentManager {
             self.updateLiveActivity(session: current)
 
             if let room = current.room {
-                try? LocalRoomCache.shared.saveFragments(current.fragments.map { $0.toSharedFragment(roomId: room.id) }, roomID: room.id)
+                self.persistSessionFragmentsPreservingAuthorship(current.fragments, roomId: room.id)
             }
         }
     }

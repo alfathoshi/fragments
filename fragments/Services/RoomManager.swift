@@ -1019,12 +1019,16 @@ public final class RoomManager {
     /// callers hide the "Captured by" row in that case.
     /// Users who never set a username resolve to "Unknown" upstream.
     public func authorName(forFragmentID fragmentID: String, roomID: String?) -> String? {
-        if let match = fragments.first(where: { $0.id == fragmentID }) {
+        // UUID string case differs between layers (Supabase lowercase vs
+        // `UUID().uuidString` uppercase), so compare case-insensitively.
+        // Otherwise a valid lookup misses and callers fall through to a
+        // poisoned cache or hide the row.
+        if let match = fragments.first(where: { $0.id.lowercased() == fragmentID.lowercased() }) {
             let trimmed = match.authorName.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
         guard let roomID, !roomID.isEmpty,
-              let cached = try? LocalRoomCache.shared.loadFragments(roomID: roomID).first(where: { $0.id == fragmentID }) else {
+              let cached = try? LocalRoomCache.shared.loadFragments(roomID: roomID).first(where: { $0.id.lowercased() == fragmentID.lowercased() }) else {
             return nil
         }
         let trimmed = cached.authorName.trimmingCharacters(in: .whitespacesAndNewlines)

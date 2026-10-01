@@ -174,7 +174,7 @@ public struct MomentDetailView: View {
             }
 
             ToolbarItem(placement: .principal) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .center, spacing: 2) {
                     Text(collection.name.isEmpty ? "Moment Detail" : collection.name)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Color.primary)
