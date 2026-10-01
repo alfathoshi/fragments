@@ -55,9 +55,10 @@ public struct SplashScreenView: View {
                 opacity = 1.0
             }
 
-            // Branding delay only. Permission prompts were removed from launch:
-            // they now run sequentially in PermissionsGateView after username
-            // setup. No system prompt may fire before that gate.
+            // Branding delay only. Permissions are requested just-in-time
+            // at first feature use (camera/mic on capture, location on
+            // Moment start, local network on first nearby sync).
+            // No system prompt may fire before such an explicit action.
             Task {
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 onFinished?()

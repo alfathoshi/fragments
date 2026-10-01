@@ -229,6 +229,9 @@ final class ContentViewModel {
     }
 
     func handleJoinSharedMoment(room: Room) {
+        // Just-in-time location: tagging the Moment needs it, so the system
+        // prompt fires here on first use (no-op once decided).
+        LocationManager.shared.requestLocation()
         if momentManager.isSessionActive {
             momentManager.cancelSession()
         }
@@ -282,6 +285,9 @@ final class ContentViewModel {
     }
 
     func handleStartPersonalMoment() {
+        // Just-in-time location: first Moment start triggers the system
+        // prompt; later starts are silent no-ops.
+        LocationManager.shared.requestLocation()
         if momentManager.isSessionActive {
             pendingStartMomentIsShared = false
             showResumeOrNewMomentAlert = true
@@ -304,6 +310,7 @@ final class ContentViewModel {
             pendingStartMomentIsShared = true
             showResumeOrNewMomentAlert = true
         } else {
+            LocationManager.shared.requestLocation()
             momentManager.startSharedSession()
             showActiveMomentView = true
         }
@@ -336,6 +343,7 @@ final class ContentViewModel {
     }
 
     func startNewMoment() {
+        LocationManager.shared.requestLocation()
         momentManager.cancelSession()
         if pendingStartMomentIsShared {
             momentManager.startSharedSession()

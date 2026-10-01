@@ -33,7 +33,6 @@ public struct ProfileView: View {
     @State private var deleteAccountError: String? = nil
     @State private var guestSignInError: String? = nil
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = true
-    @AppStorage("hasCompletedPermissions") private var hasCompletedPermissions: Bool = true
     @State private var supabaseService = SupabaseService.shared
     @State private var coordinator = OnboardingCoordinator.shared
     @State private var appleSignIn = AppleSignInCoordinator.shared
@@ -636,9 +635,8 @@ public struct ProfileView: View {
             // try?), then reset launch gating and dismiss into onboarding.
             try? await supabaseService.signOut()
             hasCompletedOnboarding = false
-            hasCompletedPermissions = false
             // Reset the shared launch coordinator (phase → .onboarding) so a
-            // subsequent sign-in re-resolves username → permissions → main
+            // subsequent sign-in re-resolves username → main
             // instead of reusing stale in-memory gating state.
             OnboardingCoordinator.shared.handleSignOut()
             isSigningOut = false
@@ -697,7 +695,6 @@ public struct ProfileView: View {
                 print("⚠️ [ProfileView] Post-deletion sign-out failed (session is inert): \(error.localizedDescription)")
             }
             hasCompletedOnboarding = false
-            hasCompletedPermissions = false
             OnboardingCoordinator.shared.handleSignOut()
             isDeletingAccount = false
             dismiss()

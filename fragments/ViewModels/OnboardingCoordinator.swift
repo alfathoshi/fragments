@@ -7,7 +7,7 @@ import SwiftUI
 import Observation
 import Supabase
 
-/// Launch state machine: splash → onboarding → username → permissions → main.
+/// Launch state machine: splash → onboarding → username → main.
 ///
 /// Single source of truth for first-launch navigation. `fragmentsApp` observes
 /// this shared coordinator directly — there is no parallel `@AppStorage`
@@ -24,14 +24,21 @@ import Supabase
 ///   must NOT confuse "guest with no session" with "signed out".
 ///
 /// State resolution:
-/// - Authenticated → username → permissions → main (unchanged).
-/// - Guest → permissions → main (username screen skipped; no backend profile).
+/// - Authenticated → username → main (unchanged).
+/// - Guest → main (username screen skipped; no backend profile).
 /// - Neither → onboarding (Apple or Guest choice).
 /// - A stale `hasCompletedOnboarding` flag NEVER routes to main on its own.
 /// - Pre-migration backend (no `username` column) → setup is SKIPPED, since a
 ///   username could never persist there (backward compatibility, §13).
-/// - `hasCompletedPermissions` persists the permissions gate; the gate view
-///   itself skips already-granted and never traps on denial.
+///
+/// Permissions (camera, microphone, location, local network) are requested
+/// just-in-time at first feature use — never via an upfront gate:
+/// - Camera: `CameraService.prepare()` when the capture UI appears.
+/// - Microphone (video sound): `CameraService` when video capture prepares;
+///   voice memos via `AudioRecorderManager.startRecording()`.
+/// - Location: `LocationManager.requestLocation()` when a Moment starts.
+/// - Local network: first `MultipeerSyncService.start()` triggers the system
+///   prompt automatically.
 @Observable
 @MainActor
 public final class OnboardingCoordinator {
@@ -40,7 +47,6 @@ public final class OnboardingCoordinator {
         case splash
         case onboarding
         case username
-        case permissions
         case main
     }
 
@@ -62,17 +68,11 @@ public final class OnboardingCoordinator {
     public var pendingSharedAction: PendingSharedAction? = nil
 
     static let onboardingKey = "hasCompletedOnboarding"
-    static let permissionsKey = "hasCompletedPermissions"
     static let guestKey = "isGuestMode"
 
     public var hasCompletedOnboarding: Bool {
         didSet {
             UserDefaults.standard.set(hasCompletedOnboarding, forKey: Self.onboardingKey)
-        }
-    }
-    public var hasCompletedPermissions: Bool {
-        didSet {
-            UserDefaults.standard.set(hasCompletedPermissions, forKey: Self.permissionsKey)
         }
     }
 
@@ -106,7 +106,6 @@ public final class OnboardingCoordinator {
         self.supabaseService = supabaseService
         self.repository = repository
         self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: Self.onboardingKey)
-        self.hasCompletedPermissions = UserDefaults.standard.bool(forKey: Self.permissionsKey)
         self.isGuestMode = UserDefaults.standard.bool(forKey: Self.guestKey)
     }
 
@@ -130,24 +129,24 @@ public final class OnboardingCoordinator {
             // Guest with no session is a legitimate completed state — NOT a
             // signed-out user. Resume directly; never show auth onboarding.
             // Local personal data and profile are untouched.
-            phase = hasCompletedPermissions ? .main : .permissions
+            phase = .main
         } else {
             // Unauthenticated always returns to onboarding for re-auth.
             // A stale `hasCompletedOnboarding` flag must NEVER route to main
-            // on its own — otherwise username + permissions are skipped.
+            // on its own — otherwise username setup is skipped.
             phase = .onboarding
         }
     }
 
     /// Guest Mode entry: an intentional completed auth choice, not a skip.
-    /// Routes straight to the shared Permission Gate (username is local-only
-    /// for guests, so the backend username screen is skipped entirely).
+    /// Routes straight to main (username is local-only for guests, so the
+    /// backend username screen is skipped entirely).
     public func continueAsGuest() {
         isGuestMode = true
         hasCompletedOnboarding = true
         pendingSharedAction = nil
         showAuthRequired = false
-        phase = hasCompletedPermissions ? .main : .permissions
+        phase = .main
     }
 
     /// Records that the guest attempted an authenticated-only action. The UI
@@ -175,7 +174,7 @@ public final class OnboardingCoordinator {
             // Leaving Guest Mode (if in it): local SwiftData moments,
             // fragments, profile, and avatar are preserved — only the mode
             // flag flips. The pending shared action (if any) is kept so the
-            // intended flow resumes after username/permissions resolve.
+            // intended flow resumes after username resolves.
             isGuestMode = false
             hasCompletedOnboarding = true
             Task { await resolveAuthenticated() }
@@ -188,7 +187,7 @@ public final class OnboardingCoordinator {
         }
     }
 
-    /// Resolves username → permissions → main for an authenticated user.
+    /// Resolves username → main for an authenticated user.
     ///
     /// Username source of truth is `profiles.username` (nullable, unique).
     /// A missing/empty username routes to the username stage — never past it.
@@ -252,12 +251,6 @@ public final class OnboardingCoordinator {
     }
 
     private func advanceAfterUsername() {
-        phase = hasCompletedPermissions ? .main : .permissions
-    }
-
-    /// Called when the permissions gate finishes (granted, denied, or skipped).
-    func completePermissions() {
-        hasCompletedPermissions = true
         phase = .main
     }
 
@@ -266,7 +259,6 @@ public final class OnboardingCoordinator {
     /// data — the user returns to the Apple-or-Guest choice.
     func handleSignOut() {
         hasCompletedOnboarding = false
-        hasCompletedPermissions = false
         isGuestMode = false
         pendingSharedAction = nil
         showAuthRequired = false

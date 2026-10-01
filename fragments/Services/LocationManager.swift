@@ -25,8 +25,8 @@ public final class LocationManager: NSObject, CLLocationManagerDelegate, @unchec
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         self.authorizationStatus = locationManager.authorizationStatus
         // NOTE: no automatic request here. Location prompts fire only from
-        // explicit user action (PermissionsGateView post-username step, or
-        // in-app refresh), never as a side effect of touching `.shared`.
+        // explicit user action (first Moment start / capture), never as a
+        // side effect of touching `.shared`.
         #if targetEnvironment(simulator)
         self.currentLocationName = "Sanur Beach, Bali"
         #endif

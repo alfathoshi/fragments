@@ -171,9 +171,6 @@ struct fragmentsApp: App {
                     case .username:
                         UsernameSetupView(coordinator: onboardingCoordinator)
                             .transition(.opacity)
-                    case .permissions:
-                        PermissionsGateView(coordinator: onboardingCoordinator)
-                            .transition(.opacity)
                     case .main:
                         ContentView()
                             .transition(.opacity)

@@ -48,17 +48,32 @@ public final class CameraService: NSObject, @unchecked Sendable {
         super.init()
         // NOTE: no permission request here. `AVCaptureDevice.requestAccess`
         // fires a system prompt, so it must only run after an explicit user
-        // interaction — the Permissions Gate Enable action, or `prepare()`
-        // when the capture UI actually appears. Never request from init.
+        // interaction — `prepare()` when the capture UI actually appears.
+        // Never request from init.
     }
 
     /// Explicit point-of-use entry point, called when the capture UI appears.
     /// Safe to call repeatedly; only prompts when status is `.notDetermined`.
     public func prepare() {
         checkPermissions()
+        if isForVideo {
+            checkMicrophonePermission()
+        }
     }
 
     // MARK: - Permissions
+
+    /// Microphone is only needed for video sound. Requested just-in-time when
+    /// the video capture UI appears — voice memos request separately in
+    /// `AudioRecorderManager.startRecording()`.
+    public func checkMicrophonePermission() {
+        #if targetEnvironment(simulator)
+        #else
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        }
+        #endif
+    }
 
     public func checkPermissions() {
         #if targetEnvironment(simulator)
